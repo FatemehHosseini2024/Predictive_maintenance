@@ -44,14 +44,6 @@ print(constant_features)
 print(f"cycle counts statistics : {cycle_counts.describe()}")
 
 
-#plt.hist(cycle_counts, bins=10)
-
-#plt.xlabel("Number of Cycles")
-#plt.ylabel("Number of Engines")
-#plt.title("Distribution of Engine Lifetimes")
-
-#plt.show()
-
 sensor_cols = [f"sensor_{i}" for i in range(1, 22)]
 
 engine = df[df["unit_id"] == 59]
@@ -67,7 +59,7 @@ for sensor in sensor_cols:
     
     #plt.show()
 
-engines = [1, 30, 20, 70, 100]
+engines = [15, 55, 25, 75, 90]
 
 for sensor in sensor_cols:
     plt.figure(figsize=(10, 5))
@@ -86,5 +78,8 @@ for sensor in sensor_cols:
     plt.legend()
     plt.show()
     
+
+
+
 
 
