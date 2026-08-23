@@ -36,10 +36,7 @@ rul = pd.read_csv(
     names=["RUL"]
 )
 
-print(rul.head())
-print("Shape:", rul.shape)
-print("\nData types:")
-print(rul.dtypes)
+
 
 
 # ============================================================
@@ -229,7 +226,7 @@ for k, v in all_issues.items():
 # این سنسورها توی EDA تشخیص داده شدن که مقدارشون در کل دیتاست
 # ثابته (واریانس صفر یا نزدیک صفر) و در نتیجه هیچ سیگنالی برای
 # مدل ندارن.
-constant_features = ["setting_3","sensor_1", "sensor_5", "sensor_10", "sensor_16", "sensor_18", "sensor_19"]
+constant_features = ["setting_1","setting_2","setting_3","sensor_1", "sensor_5", "sensor_10", "sensor_16", "sensor_18", "sensor_19"]
 
 df_train = df_train.drop(columns=constant_features)
 df_test = df_test.drop(columns=constant_features)
@@ -261,3 +258,4 @@ df_test["RUL"] = df_test["RUL_last_cycle"] + (df_test["max_cycle"] - df_test["cy
 
 # حذف ستون‌های کمکی که دیگه لازم نیستن
 df_test = df_test.drop(columns=["max_cycle", "RUL_last_cycle"])
+print(df_test.tail())

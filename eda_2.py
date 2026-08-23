@@ -289,3 +289,47 @@ plt.xlabel("Engine ID")
 plt.ylabel(f"Mean {sensor} - First 10 Cycles")
 plt.title(f"Initial Condition Comparison Across Engines")
 plt.show()
+# ============================================================
+# بررسی رابطه‌ی setting_1 و setting_2 با degradation (cycle / RUL)
+# ============================================================
+max_cycle_train = df.groupby("unit_id")["cycle"].transform("max")
+df["RUL"] = max_cycle_train - df["cycle"]
+
+
+# 1. correlation مستقیم با cycle و RUL
+corr_with_cycle = df[["setting_1", "setting_2", "cycle", "RUL"]].corr()
+print("Correlation matrix (setting_1, setting_2 vs cycle, RUL):")
+print(corr_with_cycle.loc[["setting_1", "setting_2"], ["cycle", "RUL"]])
+
+# 2. روند میانگین setting ها در طول عمر موتور (نرمالایز شده بر اساس درصد عمر)
+#    چون طول عمر هر engine متفاوته، از "life percentage" استفاده می‌کنیم تا قابل مقایسه باشن
+df["life_pct"] = df.groupby("unit_id")["cycle"].transform(lambda x: x / x.max())
+
+bins = pd.cut(df["life_pct"], bins=10)
+trend = df.groupby(bins, observed=True)[["setting_1", "setting_2"]].mean()
+print("\nMiddle of setting_1 / setting_2 across normalized life (0=start, 1=failure):")
+print(trend)
+
+# 3. نمودار برای دیدن بصری روند
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+for i, col in enumerate(["setting_1", "setting_2"]):
+    df.groupby(bins, observed=True)[col].mean().plot(ax=axes[i], marker="o")
+    axes[i].set_title(f"{col} vs normalized life")
+    axes[i].set_xlabel("Life percentage bin")
+    axes[i].set_ylabel(col)
+plt.tight_layout()
+plt.show()
+
+# 4. برای چند تا engine مشخص، نمودار setting در طول cycle (برای دیدن نوسان خام)
+sample_units = df["unit_id"].unique()[:5]
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+for unit in sample_units:
+    subset = df[df["unit_id"] == unit]
+    axes[0].plot(subset["cycle"], subset["setting_1"], alpha=0.6, label=f"unit {unit}")
+    axes[1].plot(subset["cycle"], subset["setting_2"], alpha=0.6, label=f"unit {unit}")
+axes[0].set_title("setting_1 over cycle (sample engines)")
+axes[1].set_title("setting_2 over cycle (sample engines)")
+axes[0].legend()
+axes[1].legend()
+plt.tight_layout()
+plt.show()

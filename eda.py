@@ -171,12 +171,12 @@ outlier_percentage = (
 print(outlier_percentage)
 # Sensor with the most outliers
 #sensor = outlier_counts.idxmax()
-sensor = "sensor_8"
+sensor = "sensor_6"
 
 print("Sensor with most outliers:", sensor)
 
 # Select one engine
-engine_id = 1
+engine_id = 41
 
 engine_data = df[df["unit_id"] == engine_id]
 
@@ -194,3 +194,8 @@ plt.ylabel(sensor)
 plt.title(f"{sensor} Trend - Engine {engine_id}")
 
 plt.show()
+
+
+print(df["sensor_6"].std())
+
+print(df[["setting_1","setting_2","setting_3"]].describe())
