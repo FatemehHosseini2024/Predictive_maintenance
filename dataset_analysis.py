@@ -77,7 +77,9 @@ for sensor in sensor_cols:
     plt.title(f"{sensor} Across Multiple Engines")
     plt.legend()
     plt.show()
-    
+
+print(df_test.groupby("unit_id")["cycle"].max().min())
+print(df.groupby("unit_id")["cycle"].max().min())  
 
 
 

@@ -3,6 +3,10 @@ import seaborn as sns
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 # ============================================================
 # خواندن دیتاست
@@ -259,3 +263,25 @@ df_test["RUL"] = df_test["RUL_last_cycle"] + (df_test["max_cycle"] - df_test["cy
 # حذف ستون‌های کمکی که دیگه لازم نیستن
 df_test = df_test.drop(columns=["max_cycle", "RUL_last_cycle"])
 print(df_test.tail())
+# ============================================================
+# Standardization (Z-score) روی ستون‌های سنسور
+# ============================================================
+
+
+# لیست سنسورهای باقی‌مونده (بعد از حذف سنسورهای ثابت)
+sensor_cols = [c for c in df_train.columns if c.startswith("sensor_")]
+
+# scaler رو فقط روی df_train فیت می‌کنیم تا از data leakage جلوگیری بشه
+scaler = StandardScaler()
+scaler.fit(df_train[sensor_cols])
+
+# اعمال روی train و test (با همون mean/std یادگرفته‌شده از train)
+df_train[sensor_cols] = scaler.transform(df_train[sensor_cols])
+df_test[sensor_cols] = scaler.transform(df_test[sensor_cols])
+
+print("Standardization انجام شد روی ستون‌های:")
+print(sensor_cols)
+print("\nMean بعد از استاندارد شدن (باید نزدیک 0 باشه):")
+print(df_train[sensor_cols].mean())
+print("\nStd بعد از استاندارد شدن (باید نزدیک 1 باشه):")
+print(df_train[sensor_cols].std())
