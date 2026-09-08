@@ -80,6 +80,7 @@ for sensor in sensor_cols:
 
 print(df_test.groupby("unit_id")["cycle"].max().min())
 print(df.groupby("unit_id")["cycle"].max().min())  
+print(cycle_counts.describe())
 
 
 
