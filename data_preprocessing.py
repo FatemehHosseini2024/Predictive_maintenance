@@ -1,287 +1,76 @@
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-# ============================================================
-# خواندن دیتاست
-# ============================================================
-df_train = pd.read_csv(
-    "train_FD001.txt",
-    sep=r"\s+",
-    header=None
+from utils import (
+    load_data,
+    validate_data,
+    identify_constant_sensors,
+    compute_rul,
+    drop_columns,
+    compute_rolling_features,
+    compute_trend_features,
+    normalize_global,
+    normalize_by_condition,
 )
-df_test = pd.read_csv(
-    "test_FD001.txt",
-    sep=r"\s+",
-    header=None
-)
+import pandas as pd
+import numpy as np
 
-columns = [
-    "unit_id",
-    "cycle",
-    "setting_1",
-    "setting_2",
-    "setting_3",
-    *[f"sensor_{i}" for i in range(1, 22)]
+TREND_SENSORS = [
+    "sensor_2", "sensor_3", "sensor_4", "sensor_7", "sensor_11",
+    "sensor_12", "sensor_15", "sensor_17", "sensor_20", "sensor_21",
 ]
 
-df_train.columns = columns
-df_test.columns = columns
 
-rul = pd.read_csv(
-    "RUL_FD001.txt",
-    header=None,
-    names=["RUL"]
-)
+def load_fd001_data(
+    train_path="train_FD001.txt",
+    test_path="test_FD001.txt",
+    rul_path="RUL_FD001.txt",
+    expected_engines_train=100,
+    variance_threshold=0.005,
+    sensor_exact_zero_threshold=1e-10,
+    windows=[5, 20],
+    random_state=42,
+):
+    # بارگذاری و اعتبارسنجی
+    df_train, df_test, rul = load_data(train_path, test_path, rul_path)
+    validate_data(df_train, "train_FD001", expected_engines=expected_engines_train)
+    validate_data(df_test, "test_FD001", expected_engines=None)
 
+    # شناسایی و حذف ستون‌های ثابت
+    constant_cols = identify_constant_sensors(
+        df_train,
+        variance_threshold=variance_threshold,
+        exact_zero_threshold=sensor_exact_zero_threshold,
+    )
+    print(f"\nConstant columns to drop: {constant_cols}")
+    df_train = drop_columns(df_train, constant_cols)
+    df_test = drop_columns(df_test, constant_cols)
 
+    # محاسبه RUL
+    df_train = compute_rul(df_train, is_test=False)
+    df_test = compute_rul(df_test, is_test=True, rul_last_cycles=rul["RUL"])
 
+    print(f"\ndf_train shape after RUL: {df_train.shape}")
+    print(f"df_test shape after RUL: {df_test.shape}")
 
-# ============================================================
-# توابع کمکی برای چک dtype و whitespace/parsing
-# ============================================================
-def check_column_dtype_consistency(df):
-    """
-    برای هر ستون چک می‌کنه که آیا نوع داده‌ی سطرهاش یکدست هست یا نه.
-    اگه dtype ستون 'object' باشه، یعنی pandas نتونسته یه نوع واحد
-    (مثل int64 یا float64) براش تشخیص بده و این خودش نشونه‌ی
-    مشکل توی داده‌هاست (مثلاً یه سلول رشته وسط ستون عددی).
-    """
-    problems = {}
-    for col in df.columns:
-        if df[col].dtype == object:
-            # نوع پایتونی هر مقدار غیر-null رو جمع می‌کنیم
-            types_found = df[col].dropna().apply(type).unique()
-            problems[col] = {
-                "dtype": str(df[col].dtype),
-                "python_types": [t.__name__ for t in types_found],
-            }
-    return problems
+    # ویژگی‌های رولینگ و شیب
+    df_train = compute_rolling_features(df_train, windows=windows)
+    df_train = compute_trend_features(df_train, TREND_SENSORS, windows=windows)
+    df_test = compute_rolling_features(df_test, windows=windows)
+    df_test = compute_trend_features(df_test, TREND_SENSORS, windows=windows)
 
+    # استانداردسازی سراسری (بعداً قابل ارتقاء به condition-aware)
+    sensor_cols = [c for c in df_train.columns if c.startswith("sensor_")]
+    df_train, df_test, scaler = normalize_global(df_train, df_test, sensor_cols)
 
-def check_whitespace_issues(df):
-    """
-    توی ستون‌های رشته‌ای (object)، دنبال whitespace اضافه
-    (فاصله‌ی ابتدا/انتهای مقدار) می‌گرده که می‌تونه نشونه‌ی
-    مشکل parsing باشه (مثلاً هنگام delimiter نامناسب).
-    """
-    issues = {}
-    for col in df.select_dtypes(include="object").columns:
-        stripped = df[col].astype(str).str.strip()
-        mismatch = (stripped != df[col].astype(str)).sum()
-        if mismatch > 0:
-            issues[col] = mismatch
-    return issues
+    print(f"\nFinal df_train shape: {df_train.shape}")
+    print(f"Final df_test shape: {df_test.shape}")
+    print(f"Number of sensor columns: {len(sensor_cols)}")
 
-
-
+    return df_train, df_test, rul, scaler, sensor_cols
 
 
-# ============================================================
-# توابع اعتبارسنجی (Validation)
-# ============================================================
-def validate_train_test(df, name, expected_engines=100, raw_path=None):
-    print(f"\n{'='*60}\nValidating {name}\n{'='*60}")
-    issues = []
-
-    # 1. تعداد ستون‌ها
-    if df.shape[1] != len(columns):
-        issues.append(f"Unexpected column count: {df.shape[1]} (expected {len(columns)})")
-
-    # 2. تعداد engine ها
-    n_engines = df["unit_id"].nunique()
-    print(f"Rows: {df.shape[0]}, Engines (unique unit_id): {n_engines}")
-    if n_engines != expected_engines:
-        issues.append(f"Expected {expected_engines} engines, found {n_engines}")
-
-    # 3. مقادیر گم‌شده
-    n_missing = df.isnull().sum().sum()
-    if n_missing > 0:
-        issues.append(f"Found {n_missing} missing values")
-        print(df.isnull().sum()[df.isnull().sum() > 0])
-    else:
-        print("No missing values.")
-
-    # 4. نوع داده - همه‌ی ستون‌ها باید عددی باشن
-    non_numeric = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
-    if non_numeric:
-        issues.append(f"Non-numeric columns found: {non_numeric}")
-    else:
-        print("All columns numeric.")
-
-    # 5. محدوده‌ی منطقی مقادیر
-    if (df["unit_id"] < 1).any():
-        issues.append("Found unit_id values < 1")
-    if (df["cycle"] < 1).any():
-        issues.append("Found cycle values < 1")
-
-    # 6. پیوستگی cycle برای هر engine (باید از 1 شروع بشه و بدون gap باشه)
-    bad_engines = []
-    for unit, g in df.groupby("unit_id"):
-        cycles = g["cycle"].sort_values().to_numpy()
-        expected = np.arange(1, len(cycles) + 1)
-        if not np.array_equal(cycles, expected):
-            bad_engines.append(unit)
-    if bad_engines:
-        issues.append(f"Engines with non-contiguous cycle sequence: {bad_engines}")
-    else:
-        print("All engines have contiguous cycle sequences (1..max_cycle).")
-
-    # 7. ردیف‌های تکراری (unit_id, cycle)
-    dup_count = df.duplicated(subset=["unit_id", "cycle"]).sum()
-    if dup_count > 0:
-        issues.append(f"Found {dup_count} duplicate (unit_id, cycle) rows")
-    else:
-        print("No duplicate (unit_id, cycle) rows.")
-
-    # 8. یکدست بودن dtype هر ستون
-    dtype_problems = check_column_dtype_consistency(df)
-    if dtype_problems:
-        for col, info in dtype_problems.items():
-            issues.append(f"Column '{col}' has inconsistent/object dtype: {info}")
-    else:
-        print("All columns have a single consistent dtype.")
-
-    # 9. whitespace issues داخل مقادیر (بعد از parse)
-    ws_issues = check_whitespace_issues(df)
-    if ws_issues:
-        for col, count in ws_issues.items():
-            issues.append(f"Column '{col}' has {count} values with leading/trailing whitespace")
-    else:
-        print("No whitespace issues found in parsed values.")
-
-   
-    return issues
-
-
-def validate_rul(df, name, expected_count=100, raw_path=None):
-    print(f"\n{'='*60}\nValidating {name}\n{'='*60}")
-    issues = []
-
-    # 1. تعداد ردیف‌ها
-    if df.shape[0] != expected_count:
-        issues.append(f"Expected {expected_count} rows, found {df.shape[0]}")
-
-    # 2. مقادیر گم‌شده
-    n_missing = df["RUL"].isnull().sum()
-    if n_missing > 0:
-        issues.append(f"Found {n_missing} missing values")
-    else:
-        print("No missing values.")
-
-    # 3. نوع داده - باید عدد صحیح باشه
-    is_integer = df["RUL"].dropna().apply(lambda x: float(x).is_integer())
-    if not is_integer.all():
-        issues.append("Found non-integer RUL values")
-    else:
-        print("All RUL values are integers.")
-
-    # 4. محدوده‌ی منطقی - نباید منفی باشه
-    negative = df[df["RUL"] < 0]
-    if not negative.empty:
-        issues.append(f"Found {len(negative)} negative RUL values")
-    else:
-        print("No negative RUL values.")
-
-    # 5. یکدست بودن dtype ستون RUL
-    dtype_problems = check_column_dtype_consistency(df)
-    if dtype_problems:
-        for col, info in dtype_problems.items():
-            issues.append(f"Column '{col}' has inconsistent/object dtype: {info}")
-    else:
-        print("RUL column has a single consistent dtype.")
-
-    # 6. whitespace issues
-    ws_issues = check_whitespace_issues(df)
-    if ws_issues:
-        for col, count in ws_issues.items():
-            issues.append(f"Column '{col}' has {count} values with leading/trailing whitespace")
-    else:
-        print("No whitespace issues found in parsed values.")
-
-   
-    return issues
-
-
-# ============================================================
-# اجرای اعتبارسنجی روی هر سه فایل
-# ============================================================
-all_issues = {
-    "train": validate_train_test(df_train, "train_FD001.txt", raw_path="train_FD001.txt"),
-    "test": validate_train_test(df_test, "test_FD001.txt", raw_path="test_FD001.txt"),
-    "rul": validate_rul(rul, "RUL_FD001.txt", raw_path="RUL_FD001.txt"),
-}
-
-print(f"\n{'='*60}\nSUMMARY\n{'='*60}")
-for k, v in all_issues.items():
-    status = "OK" if not v else f"{len(v)} issue(s)"
-    print(f"{k}: {status}")
-
-
-# ============================================================
-# حذف سنسورهای ثابت (constant sensors)
-# ============================================================
-# این سنسورها توی EDA تشخیص داده شدن که مقدارشون در کل دیتاست
-# ثابته (واریانس صفر یا نزدیک صفر) و در نتیجه هیچ سیگنالی برای
-# مدل ندارن.
-constant_features = ["setting_1","setting_2","setting_3","sensor_1", "sensor_5", "sensor_10", "sensor_16", "sensor_18", "sensor_19"]
-
-df_train = df_train.drop(columns=constant_features)
-df_test = df_test.drop(columns=constant_features)
-
-print(f"\nDropped constant sensor columns: {constant_features}")
-print(f"df_train shape after drop: {df_train.shape}")
-print(f"df_test shape after drop: {df_test.shape}")
-max_cycles = df_train.groupby("unit_id")["cycle"].max()
-
-df_train["RUL"] = df_train.apply(
-    lambda row: max_cycles[row["unit_id"]] - row["cycle"],
-    axis=1
-)
-# ============================================================
-# اضافه کردن RUL به df_test برای همه‌ی cycle ها (نه فقط آخرین)
-# ============================================================
-# محاسبه‌ی آخرین cycle ثبت‌شده برای هر engine در df_test
-max_cycle_test = df_test.groupby("unit_id")["cycle"].max().reset_index()
-max_cycle_test.columns = ["unit_id", "max_cycle"]
-
-# اضافه کردن RUL_last_cycle (مقدار فایل RUL) به همون جدول، بر اساس ترتیب engine ها
-max_cycle_test["RUL_last_cycle"] = rul["RUL"].values
-
-# merge با df_test روی unit_id
-df_test = df_test.merge(max_cycle_test, on="unit_id", how="left")
-
-# محاسبه‌ی RUL برای تک‌تک ردیف‌ها با توجه به فاصله از آخرین cycle
-df_test["RUL"] = df_test["RUL_last_cycle"] + (df_test["max_cycle"] - df_test["cycle"])
-
-# حذف ستون‌های کمکی که دیگه لازم نیستن
-df_test = df_test.drop(columns=["max_cycle", "RUL_last_cycle"])
-print(df_test.tail())
-# ============================================================
-# Standardization (Z-score) روی ستون‌های سنسور
-# ============================================================
-
-
-# لیست سنسورهای باقی‌مونده (بعد از حذف سنسورهای ثابت)
-sensor_cols = [c for c in df_train.columns if c.startswith("sensor_")]
-
-# scaler رو فقط روی df_train فیت می‌کنیم تا از data leakage جلوگیری بشه
-scaler = StandardScaler()
-scaler.fit(df_train[sensor_cols])
-
-# اعمال روی train و test (با همون mean/std یادگرفته‌شده از train)
-df_train[sensor_cols] = scaler.transform(df_train[sensor_cols])
-df_test[sensor_cols] = scaler.transform(df_test[sensor_cols])
-
-print("Standardization انجام شد روی ستون‌های:")
-print(sensor_cols)
-print("\nMean بعد از استاندارد شدن (باید نزدیک 0 باشه):")
-print(df_train[sensor_cols].mean())
-print("\nStd بعد از استاندارد شدن (باید نزدیک 1 باشه):")
-print(df_train[sensor_cols].std())
+# صادرات سراسری برای سازگاری با بقیه‌ی اسکریپت‌ها
+df_train, df_test, rul, scaler, sensor_cols = load_fd001_data()
