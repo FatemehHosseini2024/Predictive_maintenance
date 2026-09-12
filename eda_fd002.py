@@ -21,34 +21,176 @@ validate_data(df_test, TEST_PATH, expected_engines=None)
 df_train = compute_rul(df_train, is_test=False)
 df_test = compute_rul(df_test, is_test=True, rul_last_cycles=rul["RUL"])
 
-dataset_summary(df_train, f"{DATASET_NAME} Train")
-missing_and_duplicates(df_train)
-cycle_counts_statistics(df_train)
-
-constant_cols = find_constant_features(df_train, exclude_cols=["RUL"])
-print(f"\nConstant columns to consider dropping: {constant_cols}")
-
 # KMeans clustering on settings to create condition_id
 kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
 df_train["condition_id"] = kmeans.fit_predict(df_train[["setting_1", "setting_2", "setting_3"]])
 
-# Condition ID distribution
-if "condition_id" in df_train.columns:
+max_cycle = df_train.groupby("unit_id")["cycle"].transform("max")
+df_train["life_pct"] = df_train["cycle"] / max_cycle
+
+sensor_cols = [c for c in df_train.columns if c.startswith("sensor_")]
+settings = ["setting_1", "setting_2", "setting_3"]
+
+
+# ============================================================
+# Analysis Functions
+# ============================================================
+
+def basic_summary():
+    """Basic dataset summary, missing values, duplicates, cycle counts."""
+    dataset_summary(df_train, f"{DATASET_NAME} Train")
+    missing_and_duplicates(df_train)
+    cycle_counts_statistics(df_train)
+    constant_cols = find_constant_features(df_train, exclude_cols=["RUL"])
+    print(f"\nConstant columns to consider dropping: {constant_cols}")
+
+
+def engine_lifecycle_analysis():
+    """Engine lifetime distribution stats and plots."""
+    engine_lifetimes = df_train.groupby("unit_id")["cycle"].max()
+    print(f"\n{'='*60}")
+    print(f"Engine Life Cycle Analysis")
+    print(f"{'='*60}")
+    print(f"Total engines: {len(engine_lifetimes)}")
+    print(f"Mean lifetime: {engine_lifetimes.mean():.1f} cycles")
+    print(f"Std lifetime: {engine_lifetimes.std():.1f} cycles")
+    print(f"Min lifetime: {engine_lifetimes.min()} cycles")
+    print(f"Max lifetime: {engine_lifetimes.max()} cycles")
+    print(f"Median lifetime: {engine_lifetimes.median():.1f} cycles")
+    print(f"\nFull describe():")
+    print(engine_lifetimes.describe())
+    print(f"\nExtended percentiles:")
+    print(engine_lifetimes.describe(percentiles=[0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999]))
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    sns.histplot(engine_lifetimes, bins=30, kde=True, ax=axes[0])
+    axes[0].set_xlabel("Engine Lifetime (Cycles)")
+    axes[0].set_ylabel("Count")
+    axes[0].set_title(f"{DATASET_NAME} - Engine Lifetime Distribution")
+    axes[0].axvline(engine_lifetimes.mean(), color='red', linestyle='--', label=f'Mean: {engine_lifetimes.mean():.1f}')
+    axes[0].axvline(engine_lifetimes.median(), color='green', linestyle='--', label=f'Median: {engine_lifetimes.median():.1f}')
+    axes[0].legend()
+
+    sns.boxplot(y=engine_lifetimes, ax=axes[1])
+    axes[1].set_ylabel("Engine Lifetime (Cycles)")
+    axes[1].set_title(f"{DATASET_NAME} - Engine Lifetime Boxplot")
+    plt.tight_layout()
+    plt.show()
+
+    if "condition_id" in df_train.columns:
+        print(f"\nEngine Lifetime by Condition ID:")
+        cond_lifetimes = df_train.groupby("condition_id").apply(lambda x: x.groupby("unit_id")["cycle"].max())
+        for cond in sorted(df_train["condition_id"].unique()):
+            lifetimes = cond_lifetimes.loc[cond]
+            print(f"  Condition {cond}: n={len(lifetimes)}, mean={lifetimes.mean():.1f}, std={lifetimes.std():.1f}, min={lifetimes.min()}, max={lifetimes.max()}")
+
+        plt.figure(figsize=(10, 6))
+        lifetimes_by_cond = [cond_lifetimes.loc[cond].values for cond in sorted(df_train["condition_id"].unique())]
+        plt.boxplot(lifetimes_by_cond, labels=[f"Cond {c}" for c in sorted(df_train["condition_id"].unique())])
+        plt.xlabel("Condition ID")
+        plt.ylabel("Engine Lifetime (Cycles)")
+        plt.title(f"{DATASET_NAME} - Engine Lifetime by Condition")
+        plt.grid(alpha=0.3)
+        plt.show()
+
+
+def lifetime_vs_condition():
+    """Analyze relationship between engine lifetime and condition_id."""
+    # Each engine has one condition_id (settings are constant per engine)
+    engine_info = df_train.groupby("unit_id").agg(
+        lifetime=("cycle", "max"),
+        condition_id=("condition_id", "first"),
+        setting_1=("setting_1", "first"),
+        setting_2=("setting_2", "first"),
+        setting_3=("setting_3", "first"),
+    ).reset_index()
+
+    print(f"\n{'='*60}")
+    print(f"Engine Lifetime vs Condition ID Analysis")
+    print(f"{'='*60}")
+
+    # Overall stats by condition
+    print(f"\nLifetime statistics by Condition ID:")
+    cond_stats = engine_info.groupby("condition_id")["lifetime"].agg(["count", "mean", "std", "min", "max", "median"])
+    print(cond_stats)
+
+    # Sort conditions by mean lifetime
+    cond_mean_sorted = cond_stats.sort_values("mean", ascending=False)
+    print(f"\nConditions ranked by mean lifetime (longest to shortest):")
+    for cond, row in cond_mean_sorted.iterrows():
+        print(f"  Condition {cond}: mean={row['mean']:.1f}, median={row['median']:.1f}, std={row['std']:.1f}, n={row['count']}")
+
+    # Correlation between settings and lifetime
+    print(f"\nCorrelation between settings and lifetime:")
+    for setting in ["setting_1", "setting_2", "setting_3"]:
+        corr = engine_info[setting].corr(engine_info["lifetime"])
+        print(f"  {setting}: Pearson r = {corr:.4f}")
+
+    # Boxplot
+    plt.figure(figsize=(10, 6))
+    lifetimes_by_cond = [engine_info[engine_info["condition_id"] == cond]["lifetime"].values 
+                         for cond in sorted(engine_info["condition_id"].unique())]
+    plt.boxplot(lifetimes_by_cond, labels=[f"Cond {c}" for c in sorted(engine_info["condition_id"].unique())])
+    plt.xlabel("Condition ID")
+    plt.ylabel("Engine Lifetime (Cycles)")
+    plt.title(f"{DATASET_NAME} - Engine Lifetime Distribution by Condition")
+    plt.grid(alpha=0.3)
+    plt.show()
+
+    # Violin plot
+    plt.figure(figsize=(10, 6))
+    sns.violinplot(data=engine_info, x="condition_id", y="lifetime", inner="box")
+    plt.xlabel("Condition ID")
+    plt.ylabel("Engine Lifetime (Cycles)")
+    plt.title(f"{DATASET_NAME} - Engine Lifetime by Condition (Violin)")
+    plt.grid(alpha=0.3)
+    plt.show()
+
+    # Scatter: setting vs lifetime colored by condition
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    for i, setting in enumerate(["setting_1", "setting_2", "setting_3"]):
+        ax = axes[i]
+        scatter = ax.scatter(engine_info[setting], engine_info["lifetime"], 
+                            c=engine_info["condition_id"], cmap="tab10", alpha=0.7)
+        ax.set_xlabel(setting)
+        ax.set_ylabel("Lifetime (Cycles)")
+        ax.set_title(f"{setting} vs Lifetime")
+        ax.grid(alpha=0.3)
+    plt.colorbar(scatter, ax=axes, label="Condition ID")
+    plt.suptitle(f"{DATASET_NAME} - Settings vs Lifetime by Condition", y=1.02)
+    plt.tight_layout()
+    plt.show()
+
+    # Statistical test: ANOVA
+    from scipy import stats
+    groups = [engine_info[engine_info["condition_id"] == cond]["lifetime"].values 
+              for cond in sorted(engine_info["condition_id"].unique())]
+    f_stat, p_value = stats.f_oneway(*groups)
+    print(f"\nOne-way ANOVA (lifetime ~ condition_id): F={f_stat:.4f}, p={p_value:.6f}")
+    if p_value < 0.05:
+        print("  -> Significant difference in mean lifetime across conditions")
+    else:
+        print("  -> No significant difference in mean lifetime across conditions")
+
+    return engine_info
+
+
+def condition_distribution():
+    """Condition ID row/engine distribution plots."""
     print(f"\nCondition ID distribution:")
     cond_dist = df_train["condition_id"].value_counts().sort_index()
     print(cond_dist)
     print(f"\nEngines per condition:")
     engines_per_cond = df_train.groupby("condition_id")["unit_id"].nunique()
     print(engines_per_cond)
-    
-    # Plot distribution
+
     plt.figure(figsize=(8, 5))
     cond_dist.plot(kind="bar")
     plt.xlabel("Condition ID")
     plt.ylabel("Number of Rows")
     plt.title(f"{DATASET_NAME} - Rows per Condition ID")
     plt.show()
-    
+
     plt.figure(figsize=(8, 5))
     engines_per_cond.plot(kind="bar")
     plt.xlabel("Condition ID")
@@ -56,191 +198,200 @@ if "condition_id" in df_train.columns:
     plt.title(f"{DATASET_NAME} - Engines per Condition ID")
     plt.show()
 
-# Check for 6 distinct clusters in setting space
-settings = ["setting_1", "setting_2", "setting_3"]
-print(f"\nUnique setting combinations:")
-setting_combos = df_train[settings].drop_duplicates()
-print(setting_combos)
-print(f"Number of unique combinations: {len(setting_combos)}")
 
-# Pair plot of settings (all rows)
-sns.pairplot(df_train[settings], plot_kws={'alpha': 0.5, 's': 10})
-plt.suptitle(f"{DATASET_NAME} - Setting Pair Plot", y=1.02)
-plt.show()
+def setting_space_analysis():
+    """Setting combinations, pair plot, 3D scatter."""
+    print(f"\nUnique setting combinations:")
+    setting_combos = df_train[settings].drop_duplicates()
+    print(setting_combos)
+    print(f"Number of unique combinations: {len(setting_combos)}")
 
-# 3D scatter plot (all rows)
-fig = plt.figure(figsize=(10, 8))
-ax = fig.add_subplot(111, projection='3d')
-ax.scatter(df_train["setting_1"], df_train["setting_2"], df_train["setting_3"], alpha=0.5, s=10)
-ax.set_xlabel("setting_1")
-ax.set_ylabel("setting_2")
-ax.set_zlabel("setting_3")
-ax.set_title(f"{DATASET_NAME} - 3D Setting Space")
-plt.show()
-
-# Find sensors dependent on condition_id but stable within condition over cycles
-sensor_cols = [c for c in df_train.columns if c.startswith("sensor_")]
-
-# Between-condition variance: variance of sensor means across condition_ids
-condition_means = df_train.groupby("condition_id")[sensor_cols].mean()
-between_var = condition_means.var()
-
-# Within-condition temporal variance: average variance of sensor within each engine (condition is constant per engine)
-within_var_list = []
-for cond in sorted(df_train["condition_id"].unique()):
-    cond_data = df_train[df_train["condition_id"] == cond]
-    # Variance within each engine, then average across engines in this condition
-    engine_vars = cond_data.groupby("unit_id")[sensor_cols].var().mean()
-    within_var_list.append(engine_vars)
-within_var = pd.concat(within_var_list, axis=1).mean(axis=1)
-
-# Ratio: high ratio = sensor differs by condition but stable within condition
-ratio = between_var / (within_var + 1e-10)
-ratio_sorted = ratio.sort_values(ascending=False)
-
-print(f"\nSensor condition-dependency ratio (between_var / within_var):")
-print(ratio_sorted)
-
-# Top sensors that are condition-dependent but stable over cycles
-top_sensors = ratio_sorted.head(10).index.tolist()
-print(f"\nTop condition-dependent sensors (stable within condition): {top_sensors}")
-
-# Plot: sensor means by condition for top sensors
-fig, axes = plt.subplots(2, 5, figsize=(20, 8))
-axes = axes.flatten()
-for i, sensor in enumerate(top_sensors):
-    condition_means[sensor].plot(kind="bar", ax=axes[i])
-    axes[i].set_title(f"{sensor}")
-    axes[i].set_xlabel("Condition ID")
-    axes[i].set_ylabel("Mean")
-plt.tight_layout()
-plt.suptitle(f"{DATASET_NAME} - Top Condition-Dependent Sensors", y=1.02)
-plt.show()
-
-# Verify low temporal trend within condition for top sensors
-print(f"\nTemporal trend check (slope per cycle, averaged across engines in each condition):")
-for sensor in top_sensors:
-    slopes = []
-    for cond in sorted(df_train["condition_id"].unique()):
-        cond_data = df_train[df_train["condition_id"] == cond]
-        for engine_id, g in cond_data.groupby("unit_id"):
-            if len(g) > 1:
-                x = g["cycle"].values
-                y = g[sensor].values
-                slope = np.polyfit(x, y, 1)[0]
-                slopes.append(slope)
-    avg_slope = np.mean(np.abs(slopes)) if slopes else 0
-    print(f"  {sensor}: avg |slope| = {avg_slope:.6f}")
-
-# Trend of specific sensors over life cycle by condition_id
-target_sensors = [
-    "sensor_18", "sensor_1", "sensor_19", "sensor_5", "sensor_6", "sensor_8", 
-    "sensor_13", "sensor_12", "sensor_7", "sensor_2",
-    "sensor_21", "sensor_20", "sensor_10", "sensor_9", "sensor_15", 
-    "sensor_17", "sensor_3", "sensor_4", "sensor_11", "sensor_14", "sensor_16"
-]
-max_cycle = df_train.groupby("unit_id")["cycle"].transform("max")
-df_train["life_pct"] = df_train["cycle"] / max_cycle
-
-for sensor in target_sensors:
-    if sensor not in df_train.columns:
-        print(f"{sensor} not found in data")
-        continue
-    
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    
-    # Raw cycle trend
-    for cond in sorted(df_train["condition_id"].unique()):
-        cond_data = df_train[df_train["condition_id"] == cond]
-        # Average across engines per cycle
-        cycle_mean = cond_data.groupby("cycle")[sensor].mean()
-        axes[0].plot(cycle_mean.index, cycle_mean.values, label=f"Cond {cond}", alpha=0.7)
-    axes[0].set_xlabel("Cycle")
-    axes[0].set_ylabel(sensor)
-    axes[0].set_title(f"{sensor} - Mean Trend by Cycle per Condition")
-    axes[0].legend()
-    axes[0].grid(alpha=0.3)
-    
-    # Normalized life trend
-    bins = pd.cut(df_train["life_pct"], bins=20)
-    for cond in sorted(df_train["condition_id"].unique()):
-        cond_data = df_train[df_train["condition_id"] == cond]
-        life_trend = cond_data.groupby(bins, observed=True)[sensor].mean()
-        axes[1].plot(range(len(life_trend)), life_trend.values, label=f"Cond {cond}", alpha=0.7, marker="o")
-    axes[1].set_xlabel("Life Percentage Bin")
-    axes[1].set_ylabel(sensor)
-    axes[1].set_title(f"{sensor} - Mean Trend by Normalized Life per Condition")
-    axes[1].legend()
-    axes[1].grid(alpha=0.3)
-    
-    plt.suptitle(f"{DATASET_NAME} - {sensor} Trends by Condition", y=1.02)
-    plt.tight_layout()
+    sns.pairplot(df_train[settings], plot_kws={'alpha': 0.5, 's': 10})
+    plt.suptitle(f"{DATASET_NAME} - Setting Pair Plot", y=1.02)
     plt.show()
 
-# Individual engine trends for specific sensors by condition_id
-engine_trend_sensors = ["sensor_16", "sensor_11", "sensor_14", "sensor_4", "sensor_3"]
-max_cycle = df_train.groupby("unit_id")["cycle"].transform("max")
-df_train["life_pct"] = df_train["cycle"] / max_cycle
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(df_train["setting_1"], df_train["setting_2"], df_train["setting_3"], alpha=0.5, s=10)
+    ax.set_xlabel("setting_1")
+    ax.set_ylabel("setting_2")
+    ax.set_zlabel("setting_3")
+    ax.set_title(f"{DATASET_NAME} - 3D Setting Space")
+    plt.show()
 
-np.random.seed(42)
 
-for sensor in engine_trend_sensors:
-    if sensor not in df_train.columns:
-        print(f"{sensor} not found in data")
-        continue
-    
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+def condition_dependent_sensors():
+    """Find sensors that differ by condition but stable within condition."""
+    condition_means = df_train.groupby("condition_id")[sensor_cols].mean()
+    between_var = condition_means.var()
+
+    within_var_list = []
+    for cond in sorted(df_train["condition_id"].unique()):
+        cond_data = df_train[df_train["condition_id"] == cond]
+        engine_vars = cond_data.groupby("unit_id")[sensor_cols].var().mean()
+        within_var_list.append(engine_vars)
+    within_var = pd.concat(within_var_list, axis=1).mean(axis=1)
+
+    ratio = between_var / (within_var + 1e-10)
+    ratio_sorted = ratio.sort_values(ascending=False)
+
+    print(f"\nSensor condition-dependency ratio (between_var / within_var):")
+    print(ratio_sorted)
+
+    top_sensors = ratio_sorted.head(10).index.tolist()
+    print(f"\nTop condition-dependent sensors (stable within condition): {top_sensors}")
+
+    fig, axes = plt.subplots(2, 5, figsize=(20, 8))
     axes = axes.flatten()
-    
-    for idx, cond in enumerate(sorted(df_train["condition_id"].unique())):
-        ax = axes[idx]
-        cond_data = df_train[df_train["condition_id"] == cond]
-        
-        # Sample 20 random engines per condition
-        engines = cond_data["unit_id"].unique()
-        n_sample = min(20, len(engines))
-        sampled_engines = np.random.choice(engines, size=n_sample, replace=False)
-        
-        for engine_id in sampled_engines:
-            engine_data = cond_data[cond_data["unit_id"] == engine_id].sort_values("cycle")
-            ax.plot(engine_data["cycle"], engine_data[sensor], alpha=0.6, linewidth=1)
-        
-        ax.set_xlabel("Cycle")
-        ax.set_ylabel(sensor)
-        ax.set_title(f"{sensor} - Condition {cond} ({n_sample} sampled engines)")
-        ax.grid(alpha=0.3)
-    
-    if len(sorted(df_train["condition_id"].unique())) < 6:
-        axes[-1].set_visible(False)
-    
-    plt.suptitle(f"{DATASET_NAME} - {sensor} Sampled Engine Trends by Condition", y=1.02)
+    for i, sensor in enumerate(top_sensors):
+        condition_means[sensor].plot(kind="bar", ax=axes[i])
+        axes[i].set_title(f"{sensor}")
+        axes[i].set_xlabel("Condition ID")
+        axes[i].set_ylabel("Mean")
     plt.tight_layout()
+    plt.suptitle(f"{DATASET_NAME} - Top Condition-Dependent Sensors", y=1.02)
     plt.show()
 
-    # Also show normalized life version
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    axes = axes.flatten()
+    print(f"\nTemporal trend check (avg |slope| per cycle within condition):")
+    for sensor in top_sensors:
+        slopes = []
+        for cond in sorted(df_train["condition_id"].unique()):
+            cond_data = df_train[df_train["condition_id"] == cond]
+            for engine_id, g in cond_data.groupby("unit_id"):
+                if len(g) > 1:
+                    x = g["cycle"].values
+                    y = g[sensor].values
+                    slope = np.polyfit(x, y, 1)[0]
+                    slopes.append(slope)
+        avg_slope = np.mean(np.abs(slopes)) if slopes else 0
+        print(f"  {sensor}: avg |slope| = {avg_slope:.6f}")
+
+    return top_sensors, ratio_sorted
+
+
+def sensor_trends_by_condition(sensors=None):
+    """Mean sensor trends over cycle and normalized life by condition."""
+    if sensors is None:
+        sensors = [
+            "sensor_18", "sensor_1", "sensor_19", "sensor_5", "sensor_6", "sensor_8",
+            "sensor_13", "sensor_12", "sensor_7", "sensor_2",
+            "sensor_21", "sensor_20", "sensor_10", "sensor_9", "sensor_15",
+            "sensor_17", "sensor_3", "sensor_4", "sensor_11", "sensor_14", "sensor_16"
+        ]
+
+    for sensor in sensors:
+        if sensor not in df_train.columns:
+            print(f"{sensor} not found in data")
+            continue
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        for cond in sorted(df_train["condition_id"].unique()):
+            cond_data = df_train[df_train["condition_id"] == cond]
+            cycle_mean = cond_data.groupby("cycle")[sensor].mean()
+            axes[0].plot(cycle_mean.index, cycle_mean.values, label=f"Cond {cond}", alpha=0.7)
+        axes[0].set_xlabel("Cycle")
+        axes[0].set_ylabel(sensor)
+        axes[0].set_title(f"{sensor} - Mean Trend by Cycle per Condition")
+        axes[0].legend()
+        axes[0].grid(alpha=0.3)
+
+        bins = pd.cut(df_train["life_pct"], bins=20)
+        for cond in sorted(df_train["condition_id"].unique()):
+            cond_data = df_train[df_train["condition_id"] == cond]
+            life_trend = cond_data.groupby(bins, observed=True)[sensor].mean()
+            axes[1].plot(range(len(life_trend)), life_trend.values, label=f"Cond {cond}", alpha=0.7, marker="o")
+        axes[1].set_xlabel("Life Percentage Bin")
+        axes[1].set_ylabel(sensor)
+        axes[1].set_title(f"{sensor} - Mean Trend by Normalized Life per Condition")
+        axes[1].legend()
+        axes[1].grid(alpha=0.3)
+
+        plt.suptitle(f"{DATASET_NAME} - {sensor} Trends by Condition", y=1.02)
+        plt.tight_layout()
+        plt.show()
+
+
+def individual_engine_trends(sensors=None, n_sample=20):
+    """Individual engine trends by condition (raw cycles and normalized life)."""
+    if sensors is None:
+        sensors = ["sensor_16", "sensor_11", "sensor_14", "sensor_4", "sensor_3"]
+
+    np.random.seed(42)
+
+    for sensor in sensors:
+        if sensor not in df_train.columns:
+            print(f"{sensor} not found in data")
+            continue
+
+        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        axes = axes.flatten()
+
+        for idx, cond in enumerate(sorted(df_train["condition_id"].unique())):
+            ax = axes[idx]
+            cond_data = df_train[df_train["condition_id"] == cond]
+
+            engines = cond_data["unit_id"].unique()
+            n_sample = min(n_sample, len(engines))
+            sampled_engines = np.random.choice(engines, size=n_sample, replace=False)
+
+            for engine_id in sampled_engines:
+                engine_data = cond_data[cond_data["unit_id"] == engine_id].sort_values("cycle")
+                ax.plot(engine_data["cycle"], engine_data[sensor], alpha=0.6, linewidth=1)
+
+            ax.set_xlabel("Cycle")
+            ax.set_ylabel(sensor)
+            ax.set_title(f"{sensor} - Condition {cond} ({n_sample} sampled engines)")
+            ax.grid(alpha=0.3)
+
+        if len(sorted(df_train["condition_id"].unique())) < 6:
+            axes[-1].set_visible(False)
+
+        plt.suptitle(f"{DATASET_NAME} - {sensor} Sampled Engine Trends by Condition", y=1.02)
+        plt.tight_layout()
+        plt.show()
+
+        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        axes = axes.flatten()
+
+        for idx, cond in enumerate(sorted(df_train["condition_id"].unique())):
+            ax = axes[idx]
+            cond_data = df_train[df_train["condition_id"] == cond]
+
+            engines = cond_data["unit_id"].unique()
+            n_sample = min(n_sample, len(engines))
+            sampled_engines = np.random.choice(engines, size=n_sample, replace=False)
+
+            for engine_id in sampled_engines:
+                engine_data = cond_data[cond_data["unit_id"] == engine_id].sort_values("cycle")
+                ax.plot(engine_data["life_pct"], engine_data[sensor], alpha=0.6, linewidth=1)
+
+            ax.set_xlabel("Normalized Life (0-1)")
+            ax.set_ylabel(sensor)
+            ax.set_title(f"{sensor} - Condition {cond} ({n_sample} sampled engines)")
+            ax.grid(alpha=0.3)
+
+        if len(sorted(df_train["condition_id"].unique())) < 6:
+            axes[-1].set_visible(False)
+
+        plt.suptitle(f"{DATASET_NAME} - {sensor} Sampled Engine Trends by Normalized Life per Condition", y=1.02)
+        plt.tight_layout()
+        plt.show()
+
+
+# ============================================================
+# Main - Call functions you want to run
+# ============================================================
+
+if __name__ == "__main__":
+    # Uncomment the functions you want to run:
     
-    for idx, cond in enumerate(sorted(df_train["condition_id"].unique())):
-        ax = axes[idx]
-        cond_data = df_train[df_train["condition_id"] == cond]
-        
-        engines = cond_data["unit_id"].unique()
-        n_sample = min(20, len(engines))
-        sampled_engines = np.random.choice(engines, size=n_sample, replace=False)
-        
-        for engine_id in sampled_engines:
-            engine_data = cond_data[cond_data["unit_id"] == engine_id].sort_values("cycle")
-            ax.plot(engine_data["life_pct"], engine_data[sensor], alpha=0.6, linewidth=1)
-        
-        ax.set_xlabel("Normalized Life (0-1)")
-        ax.set_ylabel(sensor)
-        ax.set_title(f"{sensor} - Condition {cond} ({n_sample} sampled engines)")
-        ax.grid(alpha=0.3)
-    
-    if len(sorted(df_train["condition_id"].unique())) < 6:
-        axes[-1].set_visible(False)
-    
-    plt.suptitle(f"{DATASET_NAME} - {sensor} Sampled Engine Trends by Normalized Life per Condition", y=1.02)
-    plt.tight_layout()
-    plt.show()
+    # basic_summary()
+    # engine_lifecycle_analysis()
+    # condition_distribution()
+    # setting_space_analysis()
+    # condition_dependent_sensors()
+    # sensor_trends_by_condition()
+    # individual_engine_trends()
+    lifetime_vs_condition()
+    pass
