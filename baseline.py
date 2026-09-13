@@ -1,4 +1,4 @@
-from data_preprocessing import df_train, df_test
+from data_preprocessing import df_train, df_test, rul, scaler, sensor_cols
 from train_validation_split import df_train_final, df_val
 from utils import clip_rul
 from sklearn.linear_model import LinearRegression
@@ -6,6 +6,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import numpy as np
 
 RUL_CLIP = 125
+
 exclude_cols = ["unit_id", "RUL"]
 feature_cols = [c for c in df_train_final.columns if c not in exclude_cols]
 

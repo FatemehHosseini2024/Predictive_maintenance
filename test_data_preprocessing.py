@@ -52,6 +52,22 @@ def test_load_fd_data():
         print(f"✗ Unexpected error: {e}")
 
     print("\n" + "=" * 60)
+    print("Testing FD002 with 6 conditions")
+    print("=" * 60)
+    try:
+        df_train_3, df_test_3, rul_3, scaler_3, sensor_cols_3 = load_fd_data("FD002", n_conditions=6)
+        assert df_train_3 is not None
+        assert df_test_3 is not None
+        assert "condition_id" in df_train_3.columns
+        assert df_train_3["condition_id"].nunique() == 6
+        print(f"✓ FD002 with 6 conditions loaded successfully")
+        print(f"  train shape: {df_train_3.shape}")
+        print(f"  test shape: {df_test_3.shape}")
+        print(f"  conditions: {df_train_3['condition_id'].nunique()}")
+    except Exception as e:
+        print(f"✗ FD002 with conditions test failed: {e}")
+
+    print("\n" + "=" * 60)
     print("All tests completed.")
     print("=" * 60)
 
