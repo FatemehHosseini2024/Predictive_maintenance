@@ -175,6 +175,165 @@ def lifetime_vs_condition():
     return engine_info
 
 
+def sensor_rul_correlation():
+    """Global and per-condition sensor-RUL correlations with weighted average."""
+    sensor_cols = [c for c in df_train.columns if c.startswith("sensor_")]
+    
+    print(f"\n{'='*60}")
+    print(f"Sensor-RUL Correlation Analysis")
+    print(f"{'='*60}")
+    
+    # Global correlation
+    print(f"\nGlobal Sensor-RUL Correlation (all data):")
+    global_corr = df_train[sensor_cols + ["RUL"]].corr()["RUL"].drop("RUL")
+    global_corr_sorted = global_corr.sort_values(ascending=False)
+    print(global_corr_sorted)
+    
+    # Top sensors globally
+    top_global = global_corr_sorted.head(10)
+    print(f"\nTop 10 sensors globally:")
+    print(top_global)
+    
+    # Per-condition correlation
+    print(f"\n{'='*60}")
+    print(f"Per-Condition Sensor-RUL Correlations:")
+    print(f"{'='*60}")
+    
+    cond_corrs = {}
+    cond_sizes = {}
+    
+    for cond in sorted(df_train["condition_id"].unique()):
+        cond_data = df_train[df_train["condition_id"] == cond]
+        cond_sizes[cond] = len(cond_data)
+        corr = cond_data[sensor_cols + ["RUL"]].corr()["RUL"].drop("RUL")
+        cond_corrs[cond] = corr
+        print(f"\nCondition {cond} (n={len(cond_data)}):")
+        print(corr.sort_values(ascending=False))
+    
+    # Weighted average correlation
+    print(f"\n{'='*60}")
+    print(f"Weighted Average Correlation (by row count):")
+    print(f"{'='*60}")
+    
+    total_rows = sum(cond_sizes.values())
+    weighted_corr = {}
+    
+    for sensor in sensor_cols:
+        weighted_sum = 0
+        for cond in sorted(df_train["condition_id"].unique()):
+            weight = cond_sizes[cond] / total_rows
+            weighted_sum += weight * cond_corrs[cond][sensor]
+        weighted_corr[sensor] = weighted_sum
+    
+    weighted_corr_series = pd.Series(weighted_corr).sort_values(ascending=False)
+    print(weighted_corr_series)
+    
+    # Compare global vs weighted
+    print(f"\n{'='*60}")
+    print(f"Comparison: Global vs Weighted Average:")
+    print(f"{'='*60}")
+    comparison = pd.DataFrame({
+        "Global": global_corr,
+        "Weighted": weighted_corr_series,
+        "Diff": global_corr - weighted_corr_series
+    }).sort_values("Global", ascending=False)
+    print(comparison)
+    
+    # Plot: Global correlation bar
+    plt.figure(figsize=(10, 8))
+    global_corr_sorted.plot(kind="barh")
+    plt.xlabel("Pearson Correlation with RUL")
+    plt.ylabel("Sensor")
+    plt.title(f"{DATASET_NAME} - Global Sensor-RUL Correlation")
+    plt.grid(axis="x", alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+    
+    # Plot: Weighted average correlation bar
+    plt.figure(figsize=(10, 8))
+    weighted_corr_series.plot(kind="barh", color="orange")
+    plt.xlabel("Weighted Avg Correlation with RUL")
+    plt.ylabel("Sensor")
+    plt.title(f"{DATASET_NAME} - Weighted Avg Sensor-RUL Correlation (by condition size)")
+    plt.grid(axis="x", alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+    
+    # Heatmap: per-condition correlations
+    cond_corr_df = pd.DataFrame(cond_corrs).T  # conditions x sensors
+    plt.figure(figsize=(14, 8))
+    sns.heatmap(cond_corr_df, cmap="coolwarm", center=0, annot=True, fmt=".3f", cbar_kws={'label': 'Correlation'})
+    plt.title(f"{DATASET_NAME} - Sensor-RUL Correlation per Condition")
+    plt.xlabel("Sensor")
+    plt.ylabel("Condition ID")
+    plt.tight_layout()
+    plt.show()
+    
+    return global_corr_sorted, weighted_corr_series, cond_corrs
+
+
+def sensor_std_by_condition(sensors=None):
+    """Calculate std of sensors per condition_id."""
+    if sensors is None:
+        sensors = ["sensor_16", "sensor_10"]
+    
+    print(f"\n{'='*60}")
+    print(f"Sensor Std by Condition ID")
+    print(f"{'='*60}")
+    
+    for sensor in sensors:
+        if sensor not in df_train.columns:
+            print(f"{sensor} not found in data")
+            continue
+        
+        print(f"\n{sensor} std by condition_id:")
+        std_by_cond = df_train.groupby("condition_id")[sensor].std()
+        print(std_by_cond)
+        
+        mean_by_cond = df_train.groupby("condition_id")[sensor].mean()
+        print(f"\n{sensor} mean by condition_id:")
+        print(mean_by_cond)
+        
+        # Coefficient of variation
+        cv = std_by_cond / (mean_by_cond.abs() + 1e-10)
+        print(f"\n{sensor} coefficient of variation (std/|mean|) by condition_id:")
+        print(cv)
+    
+    # Combined table
+    print(f"\n{'='*60}")
+    print(f"Combined Std Table:")
+    print(f"{'='*60}")
+    std_table = df_train.groupby("condition_id")[sensors].std()
+    mean_table = df_train.groupby("condition_id")[sensors].mean()
+    cv_table = std_table / (mean_table.abs() + 1e-10)
+    
+    result = pd.DataFrame()
+    for sensor in sensors:
+        result[f"{sensor}_mean"] = mean_table[sensor]
+        result[f"{sensor}_std"] = std_table[sensor]
+        result[f"{sensor}_cv"] = cv_table[sensor]
+    
+    print(result)
+    
+    # Plot
+    fig, axes = plt.subplots(1, len(sensors), figsize=(6 * len(sensors), 5))
+    if len(sensors) == 1:
+        axes = [axes]
+    
+    for i, sensor in enumerate(sensors):
+        ax = axes[i]
+        std_table[sensor].plot(kind="bar", ax=ax, color="skyblue")
+        ax.set_xlabel("Condition ID")
+        ax.set_ylabel("Std")
+        ax.set_title(f"{sensor} Std by Condition")
+        ax.grid(alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return std_table, mean_table, cv_table
+
+
 def condition_distribution():
     """Condition ID row/engine distribution plots."""
     print(f"\nCondition ID distribution:")
@@ -393,5 +552,7 @@ if __name__ == "__main__":
     # condition_dependent_sensors()
     # sensor_trends_by_condition()
     # individual_engine_trends()
-    lifetime_vs_condition()
+    # lifetime_vs_condition()
+    #sensor_rul_correlation()
+    sensor_std_by_condition()
     pass
