@@ -124,6 +124,7 @@ def compute_rul(df, is_test=False, rul_last_cycles=None):
         df = df.copy()
         if not isinstance(rul_last_cycles, pd.Series):
             rul_last_cycles = pd.Series(rul_last_cycles)
+        rul_last_cycles.index = rul_last_cycles.index + 1
         df["RUL_last_cycle"] = df["unit_id"].map(rul_last_cycles)
         df["RUL"] = df["RUL_last_cycle"] + (max_cycles - df["cycle"])
         df = drop_columns(df, ["RUL_last_cycle"])

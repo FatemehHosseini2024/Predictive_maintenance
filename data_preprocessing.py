@@ -80,4 +80,4 @@ def load_fd_data(dataset_name="FD001", n_conditions=None):
     return df_train, df_test, rul, scaler, sensor_cols
 
 
-df_train, df_test, rul, scaler, sensor_cols = load_fd_data("FD002",6)
+df_train, df_test, rul, scaler, sensor_cols = load_fd_data("FD001",1)
