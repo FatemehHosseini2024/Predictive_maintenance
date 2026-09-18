@@ -1,9 +1,13 @@
-from final_retrain import y_test_clipped,y_test_pred
+from final_retrain import y_test_clipped, y_test_pred, final_model
+from data_preprocessing import load_fd_data
+from feature_engineering import add_feature_engineering
 import matplotlib.pyplot as plt
 import pandas as pd
-from data_preprocessing import df_train,df_test
 from baseline import feature_cols
-from final_retrain import final_model
+
+df_train, df_test, rul = load_fd_data("FD001")
+df_train_fe, df_test_fe, scaler, sensor_cols = add_feature_engineering(df_train, df_test, dataset_name="FD001")
+
 # ============================================================
 # Error Analysis - بخش 1: توزیع کلی خطا (Residual Distribution)
 # ============================================================
@@ -15,7 +19,6 @@ print(residuals.describe())
 print(f"\nمیانگین residual: {residuals.mean():.3f}")
 print(f"(اگه مثبت باشه یعنی مدل به‌طور میانگین underestimate می‌کنه، اگه منفی باشه overestimate می‌کنه)")
 
-# رسم histogram و boxplot
 fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
 axes[0].hist(residuals, bins=50, edgecolor="black", alpha=0.7)
@@ -43,7 +46,6 @@ error_by_rul = pd.DataFrame({
 error_by_rul["residual"] = error_by_rul["y_true"] - error_by_rul["y_pred"]
 error_by_rul["abs_error"] = error_by_rul["residual"].abs()
 
-# بازه‌بندی بر اساس RUL واقعی
 bins = [0, 25, 50, 75, 100, 125]
 error_by_rul["RUL_bin"] = pd.cut(error_by_rul["y_true"], bins=bins, include_lowest=True)
 
@@ -54,7 +56,6 @@ summary = error_by_rul.groupby("RUL_bin", observed=True).agg(
 )
 print(summary)
 
-# نمودار برای دیدن بصری روند
 fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
 summary["mean_residual"].plot(kind="bar", ax=axes[0], color="steelblue")
@@ -73,14 +74,13 @@ plt.show()
 # Error Analysis - بخش 3: خطا بر اساس هر engine (per-unit error)
 # ============================================================
 error_by_unit = pd.DataFrame({
-    "unit_id": df_test["unit_id"].values,
+    "unit_id": df_test_fe["unit_id"].values,
     "y_true": y_test_clipped.values,
     "y_pred": y_test_pred,
 })
 error_by_unit["residual"] = error_by_unit["y_true"] - error_by_unit["y_pred"]
 error_by_unit["abs_error"] = error_by_unit["residual"].abs()
 
-# میانگین خطا برای هر engine
 per_engine_summary = error_by_unit.groupby("unit_id").agg(
     mean_residual=("residual", "mean"),
     mean_abs_error=("abs_error", "mean"),
@@ -88,7 +88,6 @@ per_engine_summary = error_by_unit.groupby("unit_id").agg(
     n_records=("residual", "count"),
 ).reset_index()
 
-# مرتب‌سازی بر اساس بدترین عملکرد (بیشترین mean_abs_error)
 worst_engines = per_engine_summary.sort_values("mean_abs_error", ascending=False)
 print("10 تا engine با بیشترین میانگین خطا:")
 print(worst_engines.head(10).to_string(index=False))
@@ -96,11 +95,9 @@ print(worst_engines.head(10).to_string(index=False))
 print("\n10 تا engine با کمترین میانگین خطا:")
 print(per_engine_summary.sort_values("mean_abs_error").head(10).to_string(index=False))
 
-# آمار کلی توزیع خطا بین engine ها
 print("\nآمار توزیع mean_abs_error بین engine ها:")
 print(per_engine_summary["mean_abs_error"].describe())
 
-# نمودار: میانگین خطای هر engine، مرتب‌شده
 fig, ax = plt.subplots(figsize=(12, 5))
 sorted_summary = per_engine_summary.sort_values("mean_abs_error").reset_index(drop=True)
 ax.bar(range(len(sorted_summary)), sorted_summary["mean_abs_error"], color="steelblue")
@@ -123,7 +120,6 @@ importances = pd.DataFrame({
 print("Top 20 feature بر اساس اهمیت:")
 print(importances.head(20).to_string(index=False))
 
-# نمودار Top 20
 fig, ax = plt.subplots(figsize=(10, 8))
 top20 = importances.head(20).sort_values("importance")
 ax.barh(top20["feature"], top20["importance"], color="steelblue")
@@ -132,7 +128,6 @@ ax.set_title("Top 20 Feature Importances - Random Forest")
 plt.tight_layout()
 plt.show()
 
-# خلاصه بر اساس نوع feature (خام / rolling / slope)
 def classify_feature(name):
     if "_roll_mean_" in name:
         return "rolling_mean"
@@ -149,3 +144,52 @@ importances["feature_type"] = importances["feature"].apply(classify_feature)
 type_summary = importances.groupby("feature_type")["importance"].sum().sort_values(ascending=False)
 print("\nمجموع اهمیت بر اساس نوع feature:")
 print(type_summary)
+
+# ============================================================
+# SHAP Feature Importance per RUL Bin (FD001) - sampled for speed
+# ============================================================
+import shap
+
+print("\n" + "=" * 60)
+print("SHAP Feature Importance on df_test (FD001)")
+print("=" * 60)
+
+SAMPLE_SIZE = 1000
+df_test_sample = df_test_fe.sample(SAMPLE_SIZE, random_state=42)
+X_sample = df_test_sample[feature_cols]
+
+explainer = shap.TreeExplainer(final_model)
+shap_values = explainer.shap_values(X_sample)
+
+if isinstance(shap_values, list):
+    shap_values = shap_values[1]
+
+shap_df = pd.DataFrame(shap_values, columns=feature_cols, index=df_test_sample.index)
+
+print(f"SHAP values computed on {SAMPLE_SIZE} samples")
+
+bins = [0, 25, 50, 75, 100, 125]
+df_test_sample["RUL_bin"] = pd.cut(df_test_sample["RUL"], bins=bins, include_lowest=True)
+
+overall_mean_abs = shap_df.abs().mean().sort_values(ascending=False)
+top_feats = overall_mean_abs.head(10).index.tolist()
+
+comparison = {}
+for bin_label in df_test_sample["RUL_bin"].cat.categories:
+    mask = df_test_sample["RUL_bin"] == bin_label
+    mean_shap = shap_df[mask].mean(axis=0)
+    comparison[str(bin_label)] = mean_shap
+
+comparison_df = pd.DataFrame(comparison)
+comparison_df.loc["overall"] = shap_df.mean(axis=0)
+
+print("\nMean SHAP per feature per RUL bin (top 10 features):")
+for feat in top_feats:
+    vals = []
+    for col in comparison_df.columns:
+        v = comparison_df.loc[feat, col]
+        sign = "+" if v >= 0 else "-"
+        vals.append(f"{sign}{v:.4f}")
+    print(f"  {feat}: {vals}")
+
+print("\nSHAP analysis complete.")

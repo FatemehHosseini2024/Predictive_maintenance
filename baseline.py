@@ -1,4 +1,3 @@
-from data_preprocessing import df_train, df_test, rul, scaler, sensor_cols
 from train_validation_split import df_train_final, df_val
 from utils import clip_rul
 from sklearn.linear_model import LinearRegression
