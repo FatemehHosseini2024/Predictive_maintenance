@@ -542,17 +542,115 @@ def individual_engine_trends(sensors=None, n_sample=20):
 # Main - Call functions you want to run
 # ============================================================
 
+def condition_id_over_life(engines_to_plot=None):
+    """Show condition_id for sample engines across their lifetime (one chart per engine)."""
+    if engines_to_plot is None:
+        engines_to_plot = [1, 5, 10, 15, 20, 25]
+
+    print(f"\n{'='*60}")
+    print(f"Condition ID per cycle for sample engines")
+    print(f"{'='*60}")
+
+    for engine_id in engines_to_plot:
+        engine_data = df_train[df_train["unit_id"] == engine_id]
+        if engine_data.empty:
+            print(f"Engine {engine_id}: not found")
+            continue
+
+        cycles = engine_data["cycle"].values
+        conditions = engine_data["condition_id"].values
+
+        change_cycles = []
+        for i in range(1, len(conditions)):
+            if conditions[i] != conditions[i - 1]:
+                change_cycles.append((engine_data["cycle"].values[i], conditions[i]))
+
+        print(f"\nEngine {engine_id}: condition_id = {conditions[0]}, total cycles = {len(cycles)}, condition changes = {len(change_cycles)}")
+        if change_cycles:
+            for cycle, cond in change_cycles:
+                print(f"  Cycle {cycle}: condition_id changes to {cond}")
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(cycles, conditions, marker=".", markersize=2, color="steelblue")
+
+        for cycle, cond in change_cycles:
+            ax.axvline(x=cycle, color="red", linestyle="--", alpha=0.5)
+
+        ax.set_xlabel("Cycle")
+        ax.set_ylabel("Condition ID")
+        ax.set_title(f"Engine {engine_id} - Condition ID across lifetime (condition: {conditions[0]})")
+        ax.set_ylim(-0.5, max(conditions) + 0.5)
+        ax.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+
+
+def condition_count_per_engine(engines_to_show=None):
+    """Show how many unique condition_ids each engine has, with average and std."""
+    condition_counts = df_train.groupby("unit_id")["condition_id"].nunique()
+
+    print(f"\n{'='*60}")
+    print(f"Condition count per engine")
+    print(f"{'='*60}")
+
+    if engines_to_show is None:
+        engines_to_show = condition_counts.head(20).index.tolist()
+
+    print(f"\nSample engines - unique condition_ids during lifetime:")
+    for engine_id in engines_to_show:
+        if engine_id in condition_counts.index:
+            print(f"  Engine {engine_id}: {condition_counts[engine_id]} condition(s)")
+
+    avg = condition_counts.mean()
+    std = condition_counts.std()
+    print(f"\nOverall statistics:")
+    print(f"  Average condition count per engine: {avg:.4f}")
+    print(f"  Std of condition count per engine: {std:.4f}")
+    print(f"  Min: {condition_counts.min()}")
+    print(f"  Max: {condition_counts.max()}")
+    print(f"  Total engines: {len(condition_counts)}")
+
+    print(f"\n{'='*60}")
+    print(f"Engines per condition ID")
+    print(f"{'='*60}")
+    engines_per_cond = df_train.groupby("condition_id")["unit_id"].nunique()
+    print(engines_per_cond)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    axes[0].hist(condition_counts, bins=range(1, int(condition_counts.max()) + 2), color="steelblue", edgecolor="black")
+    axes[0].set_xlabel("Unique condition IDs per engine")
+    axes[0].set_ylabel("Number of engines")
+    axes[0].set_title("Distribution of condition count per engine")
+    axes[0].grid(alpha=0.3)
+
+    engines_per_cond.plot(kind="bar", ax=axes[1], color="darkorange", edgecolor="black")
+    axes[1].set_xlabel("Condition ID")
+    axes[1].set_ylabel("Number of engines")
+    axes[1].set_title("Engines per condition ID")
+    axes[1].grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# ============================================================
+# Main - Call functions you want to run
+# ============================================================
+
 if __name__ == "__main__":
     # Uncomment the functions you want to run:
     
     # basic_summary()
     # engine_lifecycle_analysis()
-    # condition_distribution()
-    # setting_space_analysis()
+    #condition_distribution()
+    #setting_space_analysis()
     # condition_dependent_sensors()
-    # sensor_trends_by_condition()
-    # individual_engine_trends()
-    # lifetime_vs_condition()
+    #sensor_trends_by_condition()
+    #individual_engine_trends()
+    #lifetime_vs_condition()
     #sensor_rul_correlation()
-    sensor_std_by_condition()
+    # sensor_std_by_condition()
+    condition_id_over_life(engines_to_plot=[34,78,200])
+    #condition_count_per_engine()
     pass
