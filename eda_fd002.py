@@ -650,7 +650,7 @@ if __name__ == "__main__":
     #individual_engine_trends()
     #lifetime_vs_condition()
     #sensor_rul_correlation()
-    # sensor_std_by_condition()
-    condition_id_over_life(engines_to_plot=[34,78,200])
+    sensor_std_by_condition()
+    #condition_id_over_life(engines_to_plot=[35,7,20])
     #condition_count_per_engine()
     pass

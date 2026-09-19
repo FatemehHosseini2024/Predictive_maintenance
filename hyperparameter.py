@@ -1,18 +1,20 @@
-# ============================================================
-# Hyperparameter Tuning با RandomizedSearchCV + GroupKFold
-# ============================================================
+from baseline import get_baseline_results
 from sklearn.model_selection import RandomizedSearchCV, GroupKFold
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from scipy.stats import randint, uniform
-from baseline import X_train, y_train_clipped,X_val,y_val_clipped
-from train_validation_split import df_train_final,df_val
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-# گروه‌ها برای GroupKFold باید هم‌طول X_train باشن (unit_id هر ردیف)
+results = get_baseline_results(dataset_name="FD001", n_conditions=6)
+df_train_final = results["df_train_final"]
+df_val = results["df_val"]
+X_train = results["X_train"]
+y_train_clipped = results["y_train_clipped"]
+X_val = results["X_val"]
+y_val_clipped = results["y_val_clipped"]
+
 groups_train = df_train_final["unit_id"]
 
-# 5 فولد، با تضمین اینکه هر unit_id فقط توی یه فولد باشه
 gkf = GroupKFold(n_splits=5)
 
 # ============================================================
@@ -56,9 +58,9 @@ def gb():
     gb_param_dist = {
         "n_estimators": randint(100, 400),
         "max_depth": randint(2, 8),
-        "learning_rate": uniform(0.01, 0.29),  # بازه‌ی 0.01 تا 0.30
+        "learning_rate": uniform(0.01, 0.29),
         "min_samples_leaf": randint(1, 20),
-        "subsample": uniform(0.6, 0.4),  # بازه‌ی 0.6 تا 1.0
+        "subsample": uniform(0.6, 0.4),
     }
 
     gb_search = RandomizedSearchCV(
@@ -81,8 +83,6 @@ def gb():
     y_val_pred_gb = gb_best.predict(X_val)
     gb_val_rmse = np.sqrt(mean_squared_error(y_val_clipped, y_val_pred_gb))
     print(f"Validation RMSE (best GB): {gb_val_rmse:.3f}")
-    
-    
 
 
 # ============================================================

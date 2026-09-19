@@ -1,8 +1,8 @@
 from data_preprocessing import load_fd_data
 from feature_engineering import add_feature_engineering
 
-df_train, df_test, rul = load_fd_data("FD001")
-df_train_fe, df_test_fe, scaler, sensor_cols = add_feature_engineering(df_train, df_test, dataset_name="FD001")
+df_train, df_test, rul = load_fd_data("FD002")
+df_train_fe, df_test_fe, scaler, sensor_cols = add_feature_engineering(df_train, df_test, dataset_name="FD002")
 
 print("=" * 60)
 print("NaN counts in df_train_fe")

@@ -1,13 +1,18 @@
 from data_preprocessing import load_fd_data
 from feature_engineering import add_feature_engineering
-from baseline import feature_cols, RUL_CLIP
+from baseline import get_baseline_results
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import numpy as np
 import pandas as pd
 
+RUL_CLIP = 125
+
 df_train, df_test, rul = load_fd_data("FD001")
-df_train_fe, df_test_fe, scaler, sensor_cols = add_feature_engineering(df_train, df_test, dataset_name="FD001")
+df_train_fe, df_test_fe, scaler, sensor_cols = add_feature_engineering(df_train, df_test, dataset_name="FD001", n_conditions=6)
+
+baseline_results = get_baseline_results("FD001", n_conditions=6)
+feature_cols = baseline_results["feature_cols"]
 
 X_train_full = df_train_fe[feature_cols]
 y_train_full = df_train_fe["RUL"].clip(upper=RUL_CLIP)

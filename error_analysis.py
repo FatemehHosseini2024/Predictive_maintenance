@@ -1,12 +1,15 @@
 from final_retrain import y_test_clipped, y_test_pred, final_model
 from data_preprocessing import load_fd_data
 from feature_engineering import add_feature_engineering
+from baseline import get_baseline_results
 import matplotlib.pyplot as plt
 import pandas as pd
-from baseline import feature_cols
 
 df_train, df_test, rul = load_fd_data("FD001")
 df_train_fe, df_test_fe, scaler, sensor_cols = add_feature_engineering(df_train, df_test, dataset_name="FD001")
+
+baseline_results = get_baseline_results("FD001")
+feature_cols = baseline_results["feature_cols"]
 
 # ============================================================
 # Error Analysis - بخش 1: توزیع کلی خطا (Residual Distribution)

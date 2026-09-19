@@ -49,14 +49,21 @@ def add_feature_engineering(df_train, df_test, dataset_name="FD002", n_condition
 
     print(f"\nFeature engineering ({dataset_name}):")
 
+    use_conditions = False
     if n_conditions is not None:
-        print(f"Creating {n_conditions} conditions via KMeans on settings:")
-        kmeans = KMeans(n_clusters=n_conditions, random_state=42, n_init=10)
-        df_train["condition_id"] = kmeans.fit_predict(df_train[["setting_1", "setting_2", "setting_3"]])
-        df_test["condition_id"] = kmeans.predict(df_test[["setting_1", "setting_2", "setting_3"]])
+        setting_cols = ["setting_1", "setting_2", "setting_3"]
+        available_setting_cols = [c for c in setting_cols if c in df_train.columns]
+        if len(available_setting_cols) >= 2:
+            print(f"Creating {n_conditions} conditions via KMeans on settings:")
+            kmeans = KMeans(n_clusters=n_conditions, random_state=42, n_init=10)
+            df_train["condition_id"] = kmeans.fit_predict(df_train[available_setting_cols])
+            df_test["condition_id"] = kmeans.predict(df_test[available_setting_cols])
 
-        sensor_cols = [c for c in df_train.columns if c.startswith("sensor_")]
-        df_train, df_test = drop_per_condition_constant_sensors(df_train, df_test, "condition_id", sensor_cols)
+            sensor_cols = [c for c in df_train.columns if c.startswith("sensor_")]
+            df_train, df_test = drop_per_condition_constant_sensors(df_train, df_test, "condition_id", sensor_cols)
+            use_conditions = True
+        else:
+            print(f"Settings not available for KMeans, skipping condition creation")
 
     df_train = compute_rolling_features(df_train, windows=WINDOWS)
     df_train = compute_trend_features(df_train, trend_sensors, windows=WINDOWS)
@@ -65,7 +72,7 @@ def add_feature_engineering(df_train, df_test, dataset_name="FD002", n_condition
 
     sensor_cols = [c for c in df_train.columns if c.startswith("sensor_") and "_roll_" not in c and "_slope_" not in c]
 
-    if n_conditions is not None:
+    if use_conditions:
         df_train, df_test, scaler = normalize_by_condition(
             df_train, df_test, sensor_cols, condition_col="condition_id", n_conditions=n_conditions
         )
