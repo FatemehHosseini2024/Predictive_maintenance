@@ -122,6 +122,73 @@ def correlation_heatmap():
     plt.show()
 
 
+def sensor_trends_all_engines(sensors=None):
+    """Mean sensor trends over cycle and normalized life, averaged across ALL engines."""
+    if sensors is None:
+        sensors = ["sensor_2", "sensor_3", "sensor_4", "sensor_7", "sensor_11", "sensor_12",
+                    "sensor_15", "sensor_17", "sensor_20", "sensor_21"]
+
+    for sensor in sensors:
+        if sensor not in df_train.columns:
+            print(f"{sensor} not found in data")
+            continue
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        cycle_mean = df_train.groupby("cycle")[sensor].mean()
+        axes[0].plot(cycle_mean.index, cycle_mean.values, color="steelblue", linewidth=1.5)
+        axes[0].set_xlabel("Cycle")
+        axes[0].set_ylabel(sensor)
+        axes[0].set_title(f"{sensor} - Average Across All Engines")
+        axes[0].grid(alpha=0.3)
+
+        bins = pd.cut(df_train["life_pct"], bins=20)
+        life_trend = df_train.groupby(bins, observed=True)[sensor].mean()
+        axes[1].plot(range(len(life_trend)), life_trend.values, color="steelblue", linewidth=1.5, marker="o", markersize=4)
+        axes[1].set_xlabel("Life Percentage Bin")
+        axes[1].set_ylabel(sensor)
+        axes[1].set_title(f"{sensor} - Avg Across Engines by Normalized Life")
+        axes[1].grid(alpha=0.3)
+
+        plt.suptitle(f"{DATASET_NAME} - {sensor} (All Engines Average)", y=1.02)
+        plt.tight_layout()
+        plt.show()
+
+
+def sensor_trends_vs_rul(sensors=None):
+    """Mean sensor trends against RUL, averaged across ALL engines."""
+    if sensors is None:
+        sensors = ["sensor_2", "sensor_3", "sensor_4", "sensor_7", "sensor_11", "sensor_12",
+                    "sensor_15", "sensor_17", "sensor_20", "sensor_21"]
+
+    for sensor in sensors:
+        if sensor not in df_train.columns:
+            print(f"{sensor} not found in data")
+            continue
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        rul_mean = df_train.groupby("RUL")[sensor].mean()
+        axes[0].plot(rul_mean.index, rul_mean.values, color="steelblue", linewidth=1.5)
+        axes[0].set_xlabel("RUL")
+        axes[0].set_ylabel(sensor)
+        axes[0].set_title(f"{sensor} vs RUL (All Engines Avg)")
+        axes[0].grid(alpha=0.3)
+        axes[0].invert_xaxis()
+
+        bins = pd.cut(df_train["RUL"], bins=20)
+        rul_trend = df_train.groupby(bins, observed=True)[sensor].mean()
+        axes[1].plot(range(len(rul_trend)), rul_trend.values, color="steelblue", linewidth=1.5, marker="o", markersize=4)
+        axes[1].set_xlabel("RUL Bin")
+        axes[1].set_ylabel(sensor)
+        axes[1].set_title(f"{sensor} vs RUL Bin (All Engines Avg)")
+        axes[1].grid(alpha=0.3)
+
+        plt.suptitle(f"{DATASET_NAME} - {sensor} vs RUL (All Engines Average)", y=1.02)
+        plt.tight_layout()
+        plt.show()
+
+
 def sensor_trends_across_engines(engines_to_plot=None, sensors=None):
     """Sensor trends across selected engines."""
     if engines_to_plot is None:
@@ -228,13 +295,15 @@ def settings_distribution():
 if __name__ == "__main__":
     # Uncomment the functions you want to run:
     
-    basic_summary()
+    #basic_summary()
     # sensor_rul_correlations()
     # outlier_analysis()
     # setting_sensor_correlations()
     # engine_lifetime_distribution()
     # correlation_heatmap()
     # sensor_trends_across_engines()
+    #sensor_trends_all_engines()
+    sensor_trends_vs_rul()
     # sensor_vs_rul_scatter("sensor_9")
     # life_stage_analysis()
     # life_progress_trend()

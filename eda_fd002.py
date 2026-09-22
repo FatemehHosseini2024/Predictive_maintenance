@@ -3,6 +3,7 @@ from utils import (
     dataset_summary, missing_and_duplicates, cycle_counts_statistics,
 )
 from utils.preprocessing import compute_rul
+from utils.normalization import normalize_by_condition
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.cluster import KMeans
@@ -471,6 +472,56 @@ def sensor_trends_by_condition(sensors=None):
         plt.show()
 
 
+def sensor_trends_vs_rul(sensors=None, n_conditions=None):
+    """Mean sensor trends against RUL, per condition, on condition-scaled data."""
+    df_train_scaled, _, _ = normalize_by_condition(
+        df_train, df_train, sensor_cols, "condition_id", n_conditions=n_conditions
+    )
+
+    if sensors is None:
+        sensors = [
+            "sensor_18", "sensor_1", "sensor_19", "sensor_5", "sensor_6", "sensor_8",
+            "sensor_13", "sensor_12", "sensor_7", "sensor_2",
+            "sensor_21", "sensor_20", "sensor_10", "sensor_9", "sensor_15",
+            "sensor_17", "sensor_3", "sensor_4", "sensor_11", "sensor_14", "sensor_16"
+        ]
+
+    conds = sorted(df_train_scaled["condition_id"].unique())
+
+    for sensor in sensors:
+        if sensor not in df_train_scaled.columns:
+            print(f"{sensor} not found in data")
+            continue
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        for cond in conds:
+            cond_data = df_train_scaled[df_train_scaled["condition_id"] == cond]
+            rul_mean = cond_data.groupby("RUL")[sensor].mean()
+            axes[0].plot(rul_mean.index, rul_mean.values, label=f"Cond {cond}", alpha=0.7)
+        axes[0].set_xlabel("RUL")
+        axes[0].set_ylabel(f"{sensor} (scaled)")
+        axes[0].set_title(f"{sensor} vs RUL per Condition (Scaled)")
+        axes[0].legend()
+        axes[0].grid(alpha=0.3)
+        axes[0].invert_xaxis()
+
+        bins = pd.cut(df_train_scaled["RUL"], bins=20)
+        for cond in conds:
+            cond_data = df_train_scaled[df_train_scaled["condition_id"] == cond]
+            rul_trend = cond_data.groupby(bins, observed=True)[sensor].mean()
+            axes[1].plot(range(len(rul_trend)), rul_trend.values, label=f"Cond {cond}", alpha=0.7, marker="o", markersize=3)
+        axes[1].set_xlabel("RUL Bin")
+        axes[1].set_ylabel(f"{sensor} (scaled)")
+        axes[1].set_title(f"{sensor} vs RUL Bin per Condition (Scaled)")
+        axes[1].legend()
+        axes[1].grid(alpha=0.3)
+
+        plt.suptitle(f"{DATASET_NAME} - {sensor} vs RUL (by Condition, Scaled)", y=1.02)
+        plt.tight_layout()
+        plt.show()
+
+
 def individual_engine_trends(sensors=None, n_sample=20):
     """Individual engine trends by condition (raw cycles and normalized life)."""
     if sensors is None:
@@ -641,16 +692,17 @@ def condition_count_per_engine(engines_to_show=None):
 if __name__ == "__main__":
     # Uncomment the functions you want to run:
     
-    # basic_summary()
+    basic_summary()
     # engine_lifecycle_analysis()
     #condition_distribution()
     #setting_space_analysis()
     # condition_dependent_sensors()
     #sensor_trends_by_condition()
+    sensor_trends_vs_rul()
     #individual_engine_trends()
     #lifetime_vs_condition()
     #sensor_rul_correlation()
-    sensor_std_by_condition()
+    #sensor_std_by_condition()
     #condition_id_over_life(engines_to_plot=[35,7,20])
     #condition_count_per_engine()
     pass
