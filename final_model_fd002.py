@@ -40,6 +40,23 @@ def drop_rolling_features(df):
     return df
 
 
+def compute_second_diff_ewma(df, sensors, spans=[5, 20]):
+    """Compute second difference (acceleration) of EWMA features per unit_id"""
+    for span in spans:
+        for col in sensors:
+            ewma_col = f"{col}_ewma_{span}"
+            if ewma_col in df.columns:
+                diff2_col = f"{col}_ewma_{span}_diff2"
+                df[diff2_col] = (
+                    df.groupby("unit_id")[ewma_col]
+                    .transform(lambda s: s.diff().diff())
+                )
+    diff2_cols = [c for c in df.columns if "_diff2" in c]
+    print(f"Second-diff EWMA features added: {len(diff2_cols)} columns")
+    print(diff2_cols)
+    return df
+
+
 def evaluate_per_bin(y_true, y_pred, n_bins=5, clip_value=125):
     bin_edges = np.linspace(0, clip_value, n_bins + 1)
     y_true_binned = pd.cut(y_true, bins=bin_edges, labels=False, include_lowest=True)
@@ -87,7 +104,11 @@ def train_final_model():
     df_train_fe = compute_ewma_features(df_train_fe, TREND_SENSORS_FD002, spans=EWMA_SPANS)
     df_test_fe = compute_ewma_features(df_test_fe, TREND_SENSORS_FD002, spans=EWMA_SPANS)
     
-    print(f"\nTotal features after EWMA (no rolling): {df_train_fe.shape[1]}")
+    # Add second-difference features from EWMA
+    df_train_fe = compute_second_diff_ewma(df_train_fe, TREND_SENSORS_FD002, spans=EWMA_SPANS)
+    df_test_fe = compute_second_diff_ewma(df_test_fe, TREND_SENSORS_FD002, spans=EWMA_SPANS)
+    
+    print(f"\nTotal features after EWMA + diff2 (no rolling): {df_train_fe.shape[1]}")
     
     df_train_final, df_val = stratified_engine_split(
         df_train_fe,
@@ -107,7 +128,7 @@ def train_final_model():
     y_val = df_val["RUL"]
     y_val_clipped = clip_rul(y_val, RUL_CLIP)
     
-    model = RandomForestRegressor(n_estimators=200, max_depth=20, min_samples_split=5, random_state=42, n_jobs=-1)
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
     
     print("\nTraining Random Forest model...")
     model.fit(X_train, y_train_clipped)
