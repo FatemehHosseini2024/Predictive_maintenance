@@ -128,7 +128,15 @@ def train_final_model():
     y_val = df_val["RUL"]
     y_val_clipped = clip_rul(y_val, RUL_CLIP)
     
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model = RandomForestRegressor(
+        n_estimators=150,
+        max_depth=20,
+        min_samples_split=10,
+        min_samples_leaf=2,
+        max_features="sqrt",
+        random_state=42,
+        n_jobs=-1
+    )
     
     print("\nTraining Random Forest model...")
     model.fit(X_train, y_train_clipped)
