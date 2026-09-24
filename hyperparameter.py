@@ -47,36 +47,13 @@ def compute_second_diff_ewma(df, sensors, spans=[5, 20]):
     return df
 
 
-def weighted_rmse_score(y_true, y_pred, n_bins=5, clip_value=125):
-    """Custom scorer: lower RUL bins get higher weights (inverse of bin index)"""
-    bin_edges = np.linspace(0, clip_value, n_bins + 1)
-    y_true_binned = pd.cut(y_true, bins=bin_edges, labels=False, include_lowest=True)
-    
-    total_weighted_rmse = 0
-    total_weight = 0
-    
-    for bin_idx in range(n_bins):
-        bin_mask = y_true_binned == bin_idx
-        y_true_bin = y_true[bin_mask]
-        y_pred_bin = y_pred[bin_mask]
-        
-        if len(y_true_bin) > 0:
-            bin_rmse = np.sqrt(mean_squared_error(y_true_bin, y_pred_bin))
-            # Weight: lower RUL bins get higher weight (e.g., 5, 4, 3, 2, 1)
-            weight = n_bins - bin_idx
-            total_weighted_rmse += weight * bin_rmse
-            total_weight += weight
-    
-    return total_weighted_rmse / total_weight if total_weight > 0 else float('inf')
-
-
 def evaluate_per_bin(y_true, y_pred, n_bins=5, clip_value=125):
     bin_edges = np.linspace(0, clip_value, n_bins + 1)
     y_true_binned = pd.cut(y_true, bins=bin_edges, labels=False, include_lowest=True)
     
     per_bin_metrics = {}
     print(f"\nPer-bin metrics (RUL bins of {int(clip_value/n_bins)}):")
-    print(f"{'Bin':<20} {'RMSE':<10} {'MAE':<10} {'Weight':<8} {'Samples':<10}")
+    print(f"{'Bin':<20} {'RMSE':<10} {'MAE':<10} {'Samples':<10}")
     
     for bin_idx in sorted(y_true_binned.unique()):
         bin_mask = y_true_binned == bin_idx
@@ -93,9 +70,8 @@ def evaluate_per_bin(y_true, y_pred, n_bins=5, clip_value=125):
         lower = int(bin_idx * clip_value / n_bins)
         upper = int((bin_idx + 1) * clip_value / n_bins)
         bin_label = f"[{lower}, {upper})"
-        weight = n_bins - bin_idx
-        per_bin_metrics[bin_label] = {"rmse": bin_rmse, "mae": bin_mae, "weight": weight, "n": len(y_true_bin)}
-        print(f"{bin_label:<20} {bin_rmse:<10.3f} {bin_mae:<10.3f} {weight:<8} {len(y_true_bin):<10}")
+        per_bin_metrics[bin_label] = {"rmse": bin_rmse, "mae": bin_mae, "n": len(y_true_bin)}
+        print(f"{bin_label:<20} {bin_rmse:<10.3f} {bin_mae:<10.3f} {len(y_true_bin):<10}")
     
     return per_bin_metrics
 
@@ -132,66 +108,80 @@ X_val = df_val[feature_cols]
 y_val = df_val["RUL"]
 y_val_clipped = clip_rul(y_val, RUL_CLIP)
 
-# Use 15% sample for faster tuning
-sample_frac = 0.15
-df_train_final_sampled = df_train_final.sample(frac=sample_frac, random_state=42)
-X_train_sampled = df_train_final_sampled[feature_cols]
-y_train_sampled = df_train_final_sampled["RUL"]
-y_train_clipped_sampled = clip_rul(y_train_sampled, RUL_CLIP)
-
-print(f"Training data (sampled): {X_train_sampled.shape}, Features: {len(feature_cols)}")
+print(f"Training data: {X_train.shape}, Features: {len(feature_cols)}")
 print(f"Validation data: {X_val.shape}")
 
-# Quick manual search with custom weighted scorer
+# RF search on the exact final_model_fd002 validation split
 param_combinations = [
     {"n_estimators": 100, "max_depth": 15, "min_samples_split": 5, "min_samples_leaf": 1, "max_features": "sqrt"},
     {"n_estimators": 100, "max_depth": 20, "min_samples_split": 5, "min_samples_leaf": 1, "max_features": "sqrt"},
     {"n_estimators": 100, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "sqrt"},
     {"n_estimators": 100, "max_depth": 20, "min_samples_split": 15, "min_samples_leaf": 3, "max_features": "sqrt"},
     {"n_estimators": 150, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "sqrt"},
+    {"n_estimators": 150, "max_depth": 20, "min_samples_split": 5, "min_samples_leaf": 2, "max_features": "sqrt"},
+    {"n_estimators": 150, "max_depth": 25, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "sqrt"},
+    {"n_estimators": 200, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "sqrt"},
+    {"n_estimators": 100, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 3, "max_features": "sqrt"},
+    {"n_estimators": 100, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "log2"},
 ]
 
-best_weighted_rmse = float('inf')
-best_params = None
-best_model = None
+best_rmse = float("inf")
+best_mae = float("inf")
+best_rmse_params = None
+best_mae_params = None
+results = []
 
 for i, params in enumerate(param_combinations):
     print(f"\n=== Testing combination {i+1}/{len(param_combinations)} ===")
     print(f"Params: {params}")
     
-    model = RandomForestRegressor(random_state=42, n_jobs=1, **params)
-    model.fit(X_train_sampled, y_train_clipped_sampled)
+    model = RandomForestRegressor(random_state=42, n_jobs=-1, **params)
+    model.fit(X_train, y_train_clipped)
     
     y_val_pred = model.predict(X_val)
-    
-    # Standard metrics
     val_rmse = np.sqrt(mean_squared_error(y_val_clipped, y_val_pred))
     val_mae = mean_absolute_error(y_val_clipped, y_val_pred)
-    
-    # Custom weighted RMSE (lower RUL bins matter more)
-    weighted_rmse = weighted_rmse_score(y_val_clipped, y_val_pred, n_bins=5, clip_value=RUL_CLIP)
+    results.append({"params": params, "rmse": val_rmse, "mae": val_mae})
     
     print(f"Standard RMSE: {val_rmse:.3f}, MAE: {val_mae:.3f}")
-    print(f"Weighted RMSE (lower RUL priority): {weighted_rmse:.3f}")
     
-    if weighted_rmse < best_weighted_rmse:
-        best_weighted_rmse = weighted_rmse
-        best_params = params
-        best_model = model
-        print("  -> NEW BEST (weighted RMSE)!")
+    if val_rmse < best_rmse:
+        best_rmse = val_rmse
+        best_rmse_params = params
+    if val_mae < best_mae:
+        best_mae = val_mae
+        best_mae_params = params
+
+selected_result = min(results, key=lambda item: (item["rmse"], item["mae"]))
+best_rmse_result = min(results, key=lambda item: item["rmse"])
+best_mae_result = min(results, key=lambda item: item["mae"])
+best_params = selected_result["params"]
+best_model = RandomForestRegressor(random_state=42, n_jobs=-1, **best_params)
+best_model.fit(X_train, y_train_clipped)
 
 print("\n" + "=" * 70)
-print("BEST PARAMETERS (Weighted RMSE - lower RUL prioritized):")
-print(f"Params: {best_params}")
-print(f"Best Weighted RMSE: {best_weighted_rmse:.3f}")
+print("SELECTED PARAMETERS (lowest validation RMSE, then MAE):")
+print(f"Params: {selected_result['params']}")
+print(f"Selected RMSE: {selected_result['rmse']:.3f}")
+print(f"Selected MAE: {selected_result['mae']:.3f}")
+print("\nBest RMSE candidate:")
+print(f"Params: {best_rmse_result['params']}")
+print(f"RMSE: {best_rmse_result['rmse']:.3f}, MAE: {best_rmse_result['mae']:.3f}")
+print("\nBest MAE candidate:")
+print(f"Params: {best_mae_result['params']}")
+print(f"RMSE: {best_mae_result['rmse']:.3f}, MAE: {best_mae_result['mae']:.3f}")
 
-print("\nStandard metrics for best model:")
+print("\nAll results:")
+for result in sorted(results, key=lambda item: (item["rmse"], item["mae"])):
+    print(f"RMSE: {result['rmse']:.3f}, MAE: {result['mae']:.3f}, Params: {result['params']}")
+
+print("\nStandard metrics for selected model:")
 y_val_pred_best = best_model.predict(X_val)
 val_rmse = np.sqrt(mean_squared_error(y_val_clipped, y_val_pred_best))
 val_mae = mean_absolute_error(y_val_clipped, y_val_pred_best)
 print(f"Standard RMSE: {val_rmse:.3f}, MAE: {val_mae:.3f}")
 
-print("\nPer-bin metrics for best model:")
+print("\nPer-bin metrics for selected model:")
 evaluate_per_bin(y_val_clipped, y_val_pred_best, n_bins=5, clip_value=RUL_CLIP)
 
 feature_importance = pd.DataFrame({
