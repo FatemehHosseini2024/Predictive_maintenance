@@ -47,6 +47,33 @@ def compute_second_diff_ewma(df, sensors, spans=[5, 20]):
     return df
 
 
+def weighted_rmse_score(y_true, y_pred, n_bins=5, clip_value=125):
+    bin_edges = np.linspace(0, clip_value, n_bins + 1)
+    y_true_binned = pd.cut(
+        y_true,
+        bins=bin_edges,
+        labels=False,
+        include_lowest=True,
+    )
+
+    total_weighted_rmse = 0.0
+    total_weight = 0.0
+
+    for bin_idx in range(n_bins):
+        bin_mask = y_true_binned == bin_idx
+        if not np.any(bin_mask):
+            continue
+
+        y_true_bin = y_true[bin_mask]
+        y_pred_bin = y_pred[bin_mask]
+        bin_rmse = np.sqrt(mean_squared_error(y_true_bin, y_pred_bin))
+        weight = n_bins - bin_idx
+        total_weighted_rmse += weight * bin_rmse
+        total_weight += weight
+
+    return total_weighted_rmse / total_weight if total_weight > 0 else float("inf")
+
+
 def evaluate_per_bin(y_true, y_pred, n_bins=5, clip_value=125):
     bin_edges = np.linspace(0, clip_value, n_bins + 1)
     y_true_binned = pd.cut(y_true, bins=bin_edges, labels=False, include_lowest=True)
@@ -111,20 +138,43 @@ y_val_clipped = clip_rul(y_val, RUL_CLIP)
 print(f"Training data: {X_train.shape}, Features: {len(feature_cols)}")
 print(f"Validation data: {X_val.shape}")
 
-# RF search on the exact final_model_fd002 validation split
-param_combinations = [
-    {"n_estimators": 100, "max_depth": 15, "min_samples_split": 5, "min_samples_leaf": 1, "max_features": "sqrt"},
-    {"n_estimators": 100, "max_depth": 20, "min_samples_split": 5, "min_samples_leaf": 1, "max_features": "sqrt"},
-    {"n_estimators": 100, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "sqrt"},
-    {"n_estimators": 100, "max_depth": 20, "min_samples_split": 15, "min_samples_leaf": 3, "max_features": "sqrt"},
-    {"n_estimators": 150, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "sqrt"},
-    {"n_estimators": 150, "max_depth": 20, "min_samples_split": 5, "min_samples_leaf": 2, "max_features": "sqrt"},
-    {"n_estimators": 150, "max_depth": 25, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "sqrt"},
-    {"n_estimators": 200, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "sqrt"},
-    {"n_estimators": 100, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 3, "max_features": "sqrt"},
-    {"n_estimators": 100, "max_depth": 20, "min_samples_split": 10, "min_samples_leaf": 2, "max_features": "log2"},
-]
+RANDOM_SEARCH_ITERATIONS = 20
+RANDOM_SEARCH_SEED = 42
+search_rng = np.random.default_rng(RANDOM_SEARCH_SEED)
 
+
+def random_rf_params(rng):
+    min_samples_leaf = int(rng.integers(1, 16))
+    min_samples_split = int(rng.integers(max(2, 2 * min_samples_leaf), 31))
+    max_depth = None if rng.random() < 0.15 else int(rng.integers(10, 41))
+    max_features = rng.choice(["sqrt", "log2", None])
+    if max_features is not None:
+        max_features = str(max_features)
+
+    return {
+        "n_estimators": int(rng.integers(100, 501)),
+        "max_depth": max_depth,
+        "min_samples_split": min_samples_split,
+        "min_samples_leaf": min_samples_leaf,
+        "max_features": max_features,
+    }
+
+
+param_combinations = [random_rf_params(search_rng) for _ in range(RANDOM_SEARCH_ITERATIONS)]
+
+print(
+    f"Randomized RF search: {RANDOM_SEARCH_ITERATIONS} candidates, "
+    f"seed={RANDOM_SEARCH_SEED}"
+)
+print(
+    "Ranges: n_estimators=100-500, max_depth=10-40 or None, "
+    "min_samples_split=2*leaf-30, min_samples_leaf=1-15, "
+    "max_features=sqrt/log2/None"
+)
+
+best_weighted_rmse = float("inf")
+best_weighted_params = None
+best_weighted_model = None
 best_rmse = float("inf")
 best_mae = float("inf")
 best_rmse_params = None
@@ -141,10 +191,26 @@ for i, params in enumerate(param_combinations):
     y_val_pred = model.predict(X_val)
     val_rmse = np.sqrt(mean_squared_error(y_val_clipped, y_val_pred))
     val_mae = mean_absolute_error(y_val_clipped, y_val_pred)
-    results.append({"params": params, "rmse": val_rmse, "mae": val_mae})
+    weighted_rmse = weighted_rmse_score(
+        y_val_clipped,
+        y_val_pred,
+        n_bins=5,
+        clip_value=RUL_CLIP,
+    )
+    results.append({
+        "params": params,
+        "rmse": val_rmse,
+        "mae": val_mae,
+        "weighted_rmse": weighted_rmse,
+    })
     
     print(f"Standard RMSE: {val_rmse:.3f}, MAE: {val_mae:.3f}")
+    print(f"Weighted RMSE (lower RUL priority): {weighted_rmse:.3f}")
     
+    if weighted_rmse < best_weighted_rmse:
+        best_weighted_rmse = weighted_rmse
+        best_weighted_params = params
+        best_weighted_model = model
     if val_rmse < best_rmse:
         best_rmse = val_rmse
         best_rmse_params = params
@@ -152,28 +218,30 @@ for i, params in enumerate(param_combinations):
         best_mae = val_mae
         best_mae_params = params
 
-selected_result = min(results, key=lambda item: (item["rmse"], item["mae"]))
-best_rmse_result = min(results, key=lambda item: item["rmse"])
-best_mae_result = min(results, key=lambda item: item["mae"])
+selected_result = min(results, key=lambda item: item["weighted_rmse"])
 best_params = selected_result["params"]
-best_model = RandomForestRegressor(random_state=42, n_jobs=-1, **best_params)
-best_model.fit(X_train, y_train_clipped)
+best_model = best_weighted_model
 
 print("\n" + "=" * 70)
-print("SELECTED PARAMETERS (lowest validation RMSE, then MAE):")
-print(f"Params: {selected_result['params']}")
-print(f"Selected RMSE: {selected_result['rmse']:.3f}")
-print(f"Selected MAE: {selected_result['mae']:.3f}")
-print("\nBest RMSE candidate:")
-print(f"Params: {best_rmse_result['params']}")
-print(f"RMSE: {best_rmse_result['rmse']:.3f}, MAE: {best_rmse_result['mae']:.3f}")
-print("\nBest MAE candidate:")
-print(f"Params: {best_mae_result['params']}")
-print(f"RMSE: {best_mae_result['rmse']:.3f}, MAE: {best_mae_result['mae']:.3f}")
+print("BEST PARAMETERS (lowest weighted validation RMSE):")
+print(f"Params: {best_weighted_params}")
+print(f"Best Weighted RMSE: {best_weighted_rmse:.3f}")
+print(f"Selected standard RMSE: {selected_result['rmse']:.3f}")
+print(f"Selected standard MAE: {selected_result['mae']:.3f}")
+print("\nBest standard RMSE candidate:")
+print(f"Params: {best_rmse_params}")
+print(f"RMSE: {best_rmse:.3f}, MAE: {min(results, key=lambda item: item['rmse'])['mae']:.3f}")
+print("\nBest standard MAE candidate:")
+print(f"Params: {best_mae_params}")
+print(f"RMSE: {min(results, key=lambda item: item['mae'])['rmse']:.3f}, MAE: {best_mae:.3f}")
 
-print("\nAll results:")
-for result in sorted(results, key=lambda item: (item["rmse"], item["mae"])):
-    print(f"RMSE: {result['rmse']:.3f}, MAE: {result['mae']:.3f}, Params: {result['params']}")
+print("\nAll results (sorted by weighted RMSE):")
+for result in sorted(results, key=lambda item: item["weighted_rmse"]):
+    print(
+        f"Weighted RMSE: {result['weighted_rmse']:.3f}, "
+        f"RMSE: {result['rmse']:.3f}, MAE: {result['mae']:.3f}, "
+        f"Params: {result['params']}"
+    )
 
 print("\nStandard metrics for selected model:")
 y_val_pred_best = best_model.predict(X_val)

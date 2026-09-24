@@ -129,11 +129,12 @@ def train_final_model():
     y_val_clipped = clip_rul(y_val, RUL_CLIP)
     
     model = RandomForestRegressor(
-        n_estimators=200,
-        max_depth=20,
-        min_samples_split=10,
-        min_samples_leaf=2,
-        max_features="sqrt",
+        n_estimators= 221,
+        max_depth= 27,
+        min_samples_split= 26,
+        min_samples_leaf= 10,
+        max_features= None,
+        
         random_state=42,
         n_jobs=-1,
     )
