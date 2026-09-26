@@ -162,6 +162,20 @@ Error analysis is performed via `error_analysis_fd001.py` and `error_analysis_fd
 4. **Feature Importance** - Top 20 features and importance grouped by type
 5. **SHAP Analysis** - SHAP summary plot on 1000 sampled test instances (requires `shap`)
 
+### Generated Visualizations
+
+![Residual Distribution](error_residuals.png)
+
+![Error by RUL Bin](error_per_bin.png)
+
+![Per-Engine Error](error_per_engine.png)
+
+![Feature Importance](feature_importance.png)
+
+![Importance by Feature Type](feature_importance_by_type.png)
+
+![SHAP Summary](shap_summary.png)
+
 ### FD002 Error Analysis
 
 Test RMSE: 16.304, MAE: 10.588
