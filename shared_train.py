@@ -127,4 +127,8 @@ def run_full_retrain(config):
         "test_mae": test_mae,
         "per_bin_metrics": per_bin,
         "feature_importance": feature_importance,
+        "df_test_fe": df_test_fe,
+        "X_test": X_test,
+        "y_test_clipped": y_test_clipped,
+        "y_test_pred": y_test_pred,
     }
