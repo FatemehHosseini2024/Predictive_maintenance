@@ -131,4 +131,5 @@ def run_full_retrain(config):
         "X_test": X_test,
         "y_test_clipped": y_test_clipped,
         "y_test_pred": y_test_pred,
+        "df_train_fe": df_train_fe,
     }
